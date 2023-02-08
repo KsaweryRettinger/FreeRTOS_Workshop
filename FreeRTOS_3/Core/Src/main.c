@@ -42,6 +42,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_tx;
 
 /* Definitions for printTask */
 osThreadId_t printTaskHandle;
@@ -71,6 +72,7 @@ const osThreadAttr_t ledOffTask_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 void printTaskFunction(void *argument);
 void ledOnTaskFunction(void *argument);
@@ -113,6 +115,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
@@ -258,6 +261,22 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -320,13 +339,15 @@ void printTaskFunction(void *argument)
 {
   /* USER CODE BEGIN 5 */
 
-	char text[] = "Hello World!\n\r";
+	char text[TEXT_SIZE] = {};
+	uint32_t count = 0;
 
   /* Infinite loop */
   for(;;)
   {
     vTaskDelay(pdMS_TO_TICKS(2000));
-    HAL_UART_Transmit(&huart2, (uint8_t *)text, (uint16_t)strlen(text), pdMS_TO_TICKS(1000));
+    snprintf(text, TEXT_SIZE, "Message number: %lu\r\n", count++);
+    HAL_UART_Transmit_DMA(&huart2, (uint8_t *)text, (uint16_t)strlen(text));
   }
   /* USER CODE END 5 */
 }
