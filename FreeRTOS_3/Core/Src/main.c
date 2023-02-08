@@ -22,7 +22,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "string.h"
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -318,10 +319,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 void printTaskFunction(void *argument)
 {
   /* USER CODE BEGIN 5 */
+
+	char text[] = "Hello World!\n\r";
+
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    HAL_UART_Transmit(&huart2, (uint8_t *)text, (uint16_t)strlen(text), pdMS_TO_TICKS(1000));
   }
   /* USER CODE END 5 */
 }
