@@ -306,7 +306,8 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskResume(ledOnTaskHandle);
   }
   /* USER CODE END 5 */
 }
@@ -321,13 +322,18 @@ void StartDefaultTask(void *argument)
 void ledOnTaskFunction(void *argument)
 {
   /* USER CODE BEGIN ledOnTaskFunction */
-	vTaskDelay(pdMS_TO_TICKS(250));
 
   /* Infinite loop */
   for(;;)
   {
-  	vTaskDelay(pdMS_TO_TICKS(500));
+  	//Suspend task
+  	vTaskSuspend(NULL);
+
+  	//Switch on LED once task is resumed
     HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+
+    //Resume LED off task
+    vTaskResume(ledOffTaskHandle);
   }
   /* USER CODE END ledOnTaskFunction */
 }
@@ -345,6 +351,10 @@ void ledOffTaskFunction(void *argument)
   /* Infinite loop */
   for(;;)
   {
+  	//Suspend task
+  	vTaskSuspend(NULL);
+
+  	//Switch off LED after a delay
   	vTaskDelay(pdMS_TO_TICKS(500));
     HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
   }
