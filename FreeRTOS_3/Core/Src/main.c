@@ -295,6 +295,17 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+// Blue push-button ISR
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+
+	// Check pin and resume LED on task
+	if (GPIO_Pin == B1_Pin) {
+		BaseType_t xYieldRequired = pdFALSE;
+		xYieldRequired = xTaskResumeFromISR(ledOnTaskHandle);
+		portYIELD_FROM_ISR(xYieldRequired);
+	}
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_printTaskFunction */
@@ -325,10 +336,14 @@ void printTaskFunction(void *argument)
 void ledOnTaskFunction(void *argument)
 {
   /* USER CODE BEGIN ledOnTaskFunction */
+
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+  	vTaskSuspend(NULL);
+    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskResume(ledOffTaskHandle);
   }
   /* USER CODE END ledOnTaskFunction */
 }
@@ -346,7 +361,10 @@ void ledOffTaskFunction(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+  	vTaskSuspend(NULL);
+    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskResume(ledOnTaskHandle);
   }
   /* USER CODE END ledOffTaskFunction */
 }
