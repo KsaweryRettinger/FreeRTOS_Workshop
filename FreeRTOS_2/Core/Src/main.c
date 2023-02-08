@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "stdbool.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -49,17 +50,10 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for ledOnTask */
-osThreadId_t ledOnTaskHandle;
-const osThreadAttr_t ledOnTask_attributes = {
-  .name = "ledOnTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for ledOffTask */
-osThreadId_t ledOffTaskHandle;
-const osThreadAttr_t ledOffTask_attributes = {
-  .name = "ledOffTask",
+/* Definitions for ledSwitchTask */
+osThreadId_t ledSwitchTaskHandle;
+const osThreadAttr_t ledSwitchTask_attributes = {
+  .name = "ledSwitchTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
@@ -72,8 +66,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 void StartDefaultTask(void *argument);
-void ledOnTaskFunction(void *argument);
-void ledOffTaskFunction(void *argument);
+void ledSwitchTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -140,11 +133,8 @@ int main(void)
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
-  /* creation of ledOnTask */
-  ledOnTaskHandle = osThreadNew(ledOnTaskFunction, NULL, &ledOnTask_attributes);
-
-  /* creation of ledOffTask */
-  ledOffTaskHandle = osThreadNew(ledOffTaskFunction, NULL, &ledOffTask_attributes);
+  /* creation of ledSwitchTask */
+  ledSwitchTaskHandle = osThreadNew(ledSwitchTaskFunction, NULL, &ledSwitchTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -295,6 +285,16 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+// Blue push-button ISR
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+	// Check pin and resume LED on task
+	if (GPIO_Pin == B1_Pin) {
+		BaseType_t xYieldRequired = pdFALSE;
+		xYieldRequired = xTaskResumeFromISR(ledSwitchTaskHandle);
+		portYIELD_FROM_ISR(xYieldRequired);
+	}
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -315,63 +315,36 @@ void StartDefaultTask(void *argument)
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_ledOnTaskFunction */
+/* USER CODE BEGIN Header_ledSwitchTaskFunction */
 /**
-* @brief Function implementing the ledOnTask thread.
+* @brief Function implementing the ledSwitchTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_ledOnTaskFunction */
-void ledOnTaskFunction(void *argument)
+/* USER CODE END Header_ledSwitchTaskFunction */
+void ledSwitchTaskFunction(void *argument)
 {
-  /* USER CODE BEGIN ledOnTaskFunction */
+  /* USER CODE BEGIN ledSwitchTaskFunction */
 
-  /* Infinite loop */
+	//Initialize LED pin
+  bool bLEDState = false;
+
+	/* Infinite loop */
   for(;;)
   {
-  	//Suspend task
+  	// Suspend task
   	vTaskSuspend(NULL);
 
-  	//Switch on LED once task is resumed
-    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+  	// Toggle LED
+  	if (bLEDState) {
+  		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  	} else {
+  		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+  	}
 
-    //Resume LED off task
-    vTaskResume(ledOffTaskHandle);
+  	bLEDState = !bLEDState;
   }
-  /* USER CODE END ledOnTaskFunction */
-}
-
-/* USER CODE BEGIN Header_ledOffTaskFunction */
-/**
-* @brief Function implementing the ledOffTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_ledOffTaskFunction */
-void ledOffTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN ledOffTaskFunction */
-  /* Infinite loop */
-  for(;;)
-  {
-  	//Suspend task
-  	vTaskSuspend(NULL);
-
-  	//Switch off LED after a delay
-  	vTaskDelay(pdMS_TO_TICKS(500));
-    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-  }
-  /* USER CODE END ledOffTaskFunction */
-}
-
-// Blue push-button ISR
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	// Check pin and resume LED on task
-	if (GPIO_Pin == B1_Pin) {
-		BaseType_t xYieldRequired = pdFALSE;
-		xYieldRequired = xTaskResumeFromISR(ledOnTaskHandle);
-		portYIELD_FROM_ISR(xYieldRequired);
-	}
+  /* USER CODE END ledSwitchTaskFunction */
 }
 
 /**
