@@ -287,6 +287,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
@@ -306,8 +310,7 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    vTaskResume(ledOnTaskHandle);
+    vTaskDelay(1);
   }
   /* USER CODE END 5 */
 }
@@ -359,6 +362,16 @@ void ledOffTaskFunction(void *argument)
     HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
   }
   /* USER CODE END ledOffTaskFunction */
+}
+
+// Blue push-button ISR
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+	// Check pin and resume LED on task
+	if (GPIO_Pin == B1_Pin) {
+		BaseType_t xYieldRequired = pdFALSE;
+		xYieldRequired = xTaskResumeFromISR(ledOnTaskHandle);
+		portYIELD_FROM_ISR(xYieldRequired);
+	}
 }
 
 /**

@@ -57,4 +57,4 @@ dkms.conf
 .settings
 [Rr]elease
 [Dd]ebug
-.launch
+*.launch
