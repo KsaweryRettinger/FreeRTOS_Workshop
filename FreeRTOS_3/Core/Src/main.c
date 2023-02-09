@@ -71,6 +71,11 @@ osSemaphoreId_t sendUart2SemaphoreHandle;
 const osSemaphoreAttr_t sendUart2Semaphore_attributes = {
   .name = "sendUart2Semaphore"
 };
+/* Definitions for buttonSemaphore */
+osSemaphoreId_t buttonSemaphoreHandle;
+const osSemaphoreAttr_t buttonSemaphore_attributes = {
+  .name = "buttonSemaphore"
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -137,6 +142,9 @@ int main(void)
   /* Create the semaphores(s) */
   /* creation of sendUart2Semaphore */
   sendUart2SemaphoreHandle = osSemaphoreNew(1, 1, &sendUart2Semaphore_attributes);
+
+  /* creation of buttonSemaphore */
+  buttonSemaphoreHandle = osSemaphoreNew(1, 0, &buttonSemaphore_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -328,11 +336,15 @@ static void MX_GPIO_Init(void)
 // Blue push-button ISR
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
-	// Check pin and resume LED on task
+	// Check pin and give semaphore
 	if (GPIO_Pin == B1_Pin) {
 		BaseType_t xYieldRequired = pdFALSE;
-		xYieldRequired = xTaskResumeFromISR(ledOnTaskHandle);
-		portYIELD_FROM_ISR(xYieldRequired);
+		BaseType_t status = pdFALSE;
+
+		status = xSemaphoreGiveFromISR(buttonSemaphoreHandle, &xYieldRequired);
+		if (status == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
 	}
 }
 
@@ -371,12 +383,15 @@ void printTaskFunction(void *argument)
   /* Infinite loop */
   for(;;)
   {
-  	// Delay task and wait for transmission completion semaphore
-  	vTaskDelay(pdMS_TO_TICKS(2000));
-    status = xSemaphoreTake(sendUart2SemaphoreHandle, pdMS_TO_TICKS(500));
+  	// Wait for button press
+  	xSemaphoreTake(buttonSemaphoreHandle, portMAX_DELAY);
 
+  	// Wait for previous transmission to complete
+  	status = xSemaphoreTake(sendUart2SemaphoreHandle, pdMS_TO_TICKS(500));
+
+  	// Send next transmission (with DMA)
     if (status == pdTRUE) {
-    	snprintf(text, TEXT_SIZE, "Message number: %lu\n\r", count++);
+    	snprintf(text, TEXT_SIZE, "Button pressed: %lu\n\r", count++);
       HAL_UART_Transmit_DMA(&huart2, (uint8_t *)text, (uint16_t)strlen(text));
     }
 
@@ -398,10 +413,11 @@ void ledOnTaskFunction(void *argument)
   /* Infinite loop */
   for(;;)
   {
-  	vTaskSuspend(NULL);
+
     HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
     vTaskDelay(pdMS_TO_TICKS(500));
     vTaskResume(ledOffTaskHandle);
+    vTaskSuspend(NULL);
   }
   /* USER CODE END ledOnTaskFunction */
 }
