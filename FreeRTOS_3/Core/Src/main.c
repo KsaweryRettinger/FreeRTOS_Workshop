@@ -22,8 +22,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "string.h"
-#include "stdio.h"
+#include <stdio.h>
+#include <string.h>
+#include <semphr.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,8 +49,8 @@ DMA_HandleTypeDef hdma_usart2_tx;
 osThreadId_t printTaskHandle;
 const osThreadAttr_t printTask_attributes = {
   .name = "printTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for ledOnTask */
 osThreadId_t ledOnTaskHandle;
@@ -64,6 +65,11 @@ const osThreadAttr_t ledOffTask_attributes = {
   .name = "ledOffTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for sendUart2Semaphore */
+osSemaphoreId_t sendUart2SemaphoreHandle;
+const osSemaphoreAttr_t sendUart2Semaphore_attributes = {
+  .name = "sendUart2Semaphore"
 };
 /* USER CODE BEGIN PV */
 
@@ -127,6 +133,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
+
+  /* Create the semaphores(s) */
+  /* creation of sendUart2Semaphore */
+  sendUart2SemaphoreHandle = osSemaphoreNew(1, 1, &sendUart2Semaphore_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -326,6 +336,21 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	}
 }
 
+//UART transmission complete ISR
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
+
+	//Check UART and give semaphore
+	if (husart->Instance == USART2) {
+		BaseType_t status = pdFALSE;
+		BaseType_t xYieldRequired = pdFALSE;
+		status = xSemaphoreGiveFromISR(sendUart2SemaphoreHandle, &xYieldRequired);
+		if (status == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
+	}
+}
+
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_printTaskFunction */
@@ -339,15 +364,22 @@ void printTaskFunction(void *argument)
 {
   /* USER CODE BEGIN 5 */
 
-	char text[TEXT_SIZE] = {};
+	char text[TEXT_SIZE] = {0};
 	uint32_t count = 0;
+	BaseType_t status = pdFALSE;
 
   /* Infinite loop */
   for(;;)
   {
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    snprintf(text, TEXT_SIZE, "Message number: %lu\r\n", count++);
-    HAL_UART_Transmit_DMA(&huart2, (uint8_t *)text, (uint16_t)strlen(text));
+  	// Delay task and wait for transmission completion semaphore
+  	vTaskDelay(pdMS_TO_TICKS(2000));
+    status = xSemaphoreTake(sendUart2SemaphoreHandle, pdMS_TO_TICKS(500));
+
+    if (status == pdTRUE) {
+    	snprintf(text, TEXT_SIZE, "Message number: %lu\n\r", count++);
+      HAL_UART_Transmit_DMA(&huart2, (uint8_t *)text, (uint16_t)strlen(text));
+    }
+
   }
   /* USER CODE END 5 */
 }
