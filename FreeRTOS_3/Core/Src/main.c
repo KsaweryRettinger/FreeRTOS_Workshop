@@ -44,6 +44,7 @@
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_tx;
+DMA_HandleTypeDef hdma_usart2_rx;
 
 /* Definitions for echoTask */
 osThreadId_t echoTaskHandle;
@@ -63,6 +64,11 @@ const osThreadAttr_t ledTask_attributes = {
 osSemaphoreId_t sendUart2SemaphoreHandle;
 const osSemaphoreAttr_t sendUart2Semaphore_attributes = {
   .name = "sendUart2Semaphore"
+};
+/* Definitions for receiveUart2Semaphore */
+osSemaphoreId_t receiveUart2SemaphoreHandle;
+const osSemaphoreAttr_t receiveUart2Semaphore_attributes = {
+  .name = "receiveUart2Semaphore"
 };
 /* USER CODE BEGIN PV */
 SemaphoreHandle_t buttonSemaphoreHandle;
@@ -129,6 +135,9 @@ int main(void)
   /* Create the semaphores(s) */
   /* creation of sendUart2Semaphore */
   sendUart2SemaphoreHandle = osSemaphoreNew(1, 1, &sendUart2Semaphore_attributes);
+
+  /* creation of receiveUart2Semaphore */
+  receiveUart2SemaphoreHandle = osSemaphoreNew(1, 1, &receiveUart2Semaphore_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   buttonSemaphoreHandle = xSemaphoreCreateCounting(10, 0);
@@ -269,6 +278,9 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   /* DMA1_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
@@ -343,6 +355,22 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
 	}
 }
 
+//UART receive complete ISR
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *husart) {
+
+	BaseType_t status = pdFALSE;
+	BaseType_t xYieldRequired = pdFALSE;
+
+	//Check UART and give semaphore
+	if (husart->Instance == USART2) {
+		status = xSemaphoreGiveFromISR(receiveUart2SemaphoreHandle, &xYieldRequired);
+		if (status == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
+	}
+}
+
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_echoTaskFunction */
@@ -356,26 +384,38 @@ void echoTaskFunction(void *argument)
 {
   /* USER CODE BEGIN 5 */
 
-//	char text[TEXT_SIZE] = {0};
-//	uint32_t count = 0;
-//	BaseType_t status = pdFALSE;
+	static char cRxChar = 0;
+	char xTxChar[] = {0, '\n'};
+	BaseType_t xStatus = pdFALSE;
+
+	// Take semaphore at the start of execution
+	xSemaphoreTake(receiveUart2SemaphoreHandle, portMAX_DELAY);
+
+	// Start next DMA receive transfer (non-blocking)
+	HAL_UART_Receive_DMA(&huart2, (uint8_t *)&cRxChar, (uint16_t)sizeof(cRxChar));
 
   /* Infinite loop */
   for(;;)
   {
-  	vTaskDelay(1);
-//  	// Wait for button press
-//  	xSemaphoreTake(buttonSemaphoreHandle, portMAX_DELAY);
-//
-//  	// Wait for previous transmission to complete
-//  	status = xSemaphoreTake(sendUart2SemaphoreHandle, pdMS_TO_TICKS(500));
-//
-//  	// Send next transmission (with DMA)
-//    if (status == pdTRUE) {
-//    	snprintf(text, TEXT_SIZE, "Button pressed: %lu\n\r", count++);
-//      HAL_UART_Transmit_DMA(&huart2, (uint8_t *)text, (uint16_t)strlen(text));
-//    }
+  	// Binary semaphore given in ISR
+  	xStatus = xSemaphoreTake(receiveUart2SemaphoreHandle, pdMS_TO_TICKS(1000));
 
+  	if (pdTRUE == xStatus) {
+
+  		// Save character for transmission
+  		xTxChar[0] = cRxChar;
+
+  		// Start next DMA receive transfer (non-blocking)
+  		HAL_UART_Receive_DMA(&huart2, (uint8_t *)&cRxChar, (uint16_t)sizeof(cRxChar));
+
+    	// Wait for previous transmission to complete
+    	xStatus = xSemaphoreTake(sendUart2SemaphoreHandle, pdMS_TO_TICKS(500));
+
+    	// Send next transmission (using DMA)
+      if (pdTRUE == xStatus) {
+        HAL_UART_Transmit_DMA(&huart2, (uint8_t *)xTxChar, (xTxChar[0] == '\r') ? 2 : 1);
+      }
+  	}
   }
   /* USER CODE END 5 */
 }
