@@ -45,24 +45,17 @@
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_tx;
 
-/* Definitions for printTask */
-osThreadId_t printTaskHandle;
-const osThreadAttr_t printTask_attributes = {
-  .name = "printTask",
+/* Definitions for echoTask */
+osThreadId_t echoTaskHandle;
+const osThreadAttr_t echoTask_attributes = {
+  .name = "echoTask",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for ledOnTask */
-osThreadId_t ledOnTaskHandle;
-const osThreadAttr_t ledOnTask_attributes = {
-  .name = "ledOnTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for ledOffTask */
-osThreadId_t ledOffTaskHandle;
-const osThreadAttr_t ledOffTask_attributes = {
-  .name = "ledOffTask",
+/* Definitions for ledTask */
+osThreadId_t ledTaskHandle;
+const osThreadAttr_t ledTask_attributes = {
+  .name = "ledTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
@@ -71,13 +64,8 @@ osSemaphoreId_t sendUart2SemaphoreHandle;
 const osSemaphoreAttr_t sendUart2Semaphore_attributes = {
   .name = "sendUart2Semaphore"
 };
-/* Definitions for buttonSemaphore */
-osSemaphoreId_t buttonSemaphoreHandle;
-const osSemaphoreAttr_t buttonSemaphore_attributes = {
-  .name = "buttonSemaphore"
-};
 /* USER CODE BEGIN PV */
-
+SemaphoreHandle_t buttonSemaphoreHandle;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -85,9 +73,8 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
-void printTaskFunction(void *argument);
-void ledOnTaskFunction(void *argument);
-void ledOffTaskFunction(void *argument);
+void echoTaskFunction(void *argument);
+void ledTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -143,11 +130,8 @@ int main(void)
   /* creation of sendUart2Semaphore */
   sendUart2SemaphoreHandle = osSemaphoreNew(1, 1, &sendUart2Semaphore_attributes);
 
-  /* creation of buttonSemaphore */
-  buttonSemaphoreHandle = osSemaphoreNew(1, 0, &buttonSemaphore_attributes);
-
   /* USER CODE BEGIN RTOS_SEMAPHORES */
-  /* add semaphores, ... */
+  buttonSemaphoreHandle = xSemaphoreCreateCounting(10, 0);
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
@@ -159,14 +143,11 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of printTask */
-  printTaskHandle = osThreadNew(printTaskFunction, NULL, &printTask_attributes);
+  /* creation of echoTask */
+  echoTaskHandle = osThreadNew(echoTaskFunction, NULL, &echoTask_attributes);
 
-  /* creation of ledOnTask */
-  ledOnTaskHandle = osThreadNew(ledOnTaskFunction, NULL, &ledOnTask_attributes);
-
-  /* creation of ledOffTask */
-  ledOffTaskHandle = osThreadNew(ledOffTaskFunction, NULL, &ledOffTask_attributes);
+  /* creation of ledTask */
+  ledTaskHandle = osThreadNew(ledTaskFunction, NULL, &ledTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -362,85 +343,63 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
 	}
 }
 
-
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_printTaskFunction */
+/* USER CODE BEGIN Header_echoTaskFunction */
 /**
-  * @brief  Function implementing the printTask thread.
+  * @brief  Function implementing the echoTask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_printTaskFunction */
-void printTaskFunction(void *argument)
+/* USER CODE END Header_echoTaskFunction */
+void echoTaskFunction(void *argument)
 {
   /* USER CODE BEGIN 5 */
 
-	char text[TEXT_SIZE] = {0};
-	uint32_t count = 0;
-	BaseType_t status = pdFALSE;
+//	char text[TEXT_SIZE] = {0};
+//	uint32_t count = 0;
+//	BaseType_t status = pdFALSE;
 
   /* Infinite loop */
   for(;;)
   {
-  	// Wait for button press
-  	xSemaphoreTake(buttonSemaphoreHandle, portMAX_DELAY);
-
-  	// Wait for previous transmission to complete
-  	status = xSemaphoreTake(sendUart2SemaphoreHandle, pdMS_TO_TICKS(500));
-
-  	// Send next transmission (with DMA)
-    if (status == pdTRUE) {
-    	snprintf(text, TEXT_SIZE, "Button pressed: %lu\n\r", count++);
-      HAL_UART_Transmit_DMA(&huart2, (uint8_t *)text, (uint16_t)strlen(text));
-    }
+  	vTaskDelay(1);
+//  	// Wait for button press
+//  	xSemaphoreTake(buttonSemaphoreHandle, portMAX_DELAY);
+//
+//  	// Wait for previous transmission to complete
+//  	status = xSemaphoreTake(sendUart2SemaphoreHandle, pdMS_TO_TICKS(500));
+//
+//  	// Send next transmission (with DMA)
+//    if (status == pdTRUE) {
+//    	snprintf(text, TEXT_SIZE, "Button pressed: %lu\n\r", count++);
+//      HAL_UART_Transmit_DMA(&huart2, (uint8_t *)text, (uint16_t)strlen(text));
+//    }
 
   }
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_ledOnTaskFunction */
+/* USER CODE BEGIN Header_ledTaskFunction */
 /**
-* @brief Function implementing the ledOnTask thread.
+* @brief Function implementing the ledTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_ledOnTaskFunction */
-void ledOnTaskFunction(void *argument)
+/* USER CODE END Header_ledTaskFunction */
+void ledTaskFunction(void *argument)
 {
-  /* USER CODE BEGIN ledOnTaskFunction */
-
-  /* Infinite loop */
+  /* USER CODE BEGIN ledTaskFunction */
   for(;;)
   {
-
-    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    vTaskResume(ledOffTaskHandle);
-    vTaskSuspend(NULL);
+    if (pdTRUE == xSemaphoreTake(buttonSemaphoreHandle, pdMS_TO_TICKS(1000))) {
+    	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+    	vTaskDelay(pdMS_TO_TICKS(1000));
+    	HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+    	vTaskDelay(pdMS_TO_TICKS(1000));
+    }
   }
-  /* USER CODE END ledOnTaskFunction */
-}
-
-/* USER CODE BEGIN Header_ledOffTaskFunction */
-/**
-* @brief Function implementing the ledOffTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_ledOffTaskFunction */
-void ledOffTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN ledOffTaskFunction */
-  /* Infinite loop */
-  for(;;)
-  {
-  	vTaskSuspend(NULL);
-    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    vTaskResume(ledOnTaskHandle);
-  }
-  /* USER CODE END ledOffTaskFunction */
+  /* USER CODE END ledTaskFunction */
 }
 
 /**
