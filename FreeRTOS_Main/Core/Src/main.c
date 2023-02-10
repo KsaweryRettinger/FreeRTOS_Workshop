@@ -22,7 +22,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "string.h"
+#include "semphr.h"
+#include "stdio.h"
+#include "stream_buffer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -51,13 +54,28 @@ const osThreadAttr_t defaultTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for cliTask */
+osThreadId_t cliTaskHandle;
+const osThreadAttr_t cliTask_attributes = {
+  .name = "cliTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for cliPrintTask */
+osThreadId_t cliPrintTaskHandle;
+const osThreadAttr_t cliPrintTask_attributes = {
+  .name = "cliPrintTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
   .name = "uart2TxSem"
 };
-/* USER CODE BEGIN PV */
 
+/* USER CODE BEGIN PV */
+StreamBufferHandle_t xStreamBufferCli = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,9 +84,14 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 void StartDefaultTask(void *argument);
+void cliTaskFunction(void *argument);
+void cliPrintTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
-
+static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
+																						 const void *pvTxData,
+																						 size_t xDataLengthBytes,
+																						 TickType_t xTicksToWait);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -106,7 +129,12 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
+
   /* USER CODE BEGIN 2 */
+
+  // Create and reset stream buffer for printing CLI output with trigger level 1
+  xStreamBufferCli = xStreamBufferCreate(OUTPUT_BUFFER_LEN, 1);
+  xStreamBufferReset(xStreamBufferCli);
 
   /* USER CODE END 2 */
 
@@ -136,6 +164,12 @@ int main(void)
   /* Create the thread(s) */
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* creation of cliTask */
+  cliTaskHandle = osThreadNew(cliTaskFunction, NULL, &cliTask_attributes);
+
+  /* creation of cliPrintTask */
+  cliPrintTaskHandle = osThreadNew(cliPrintTaskFunction, NULL, &cliPrintTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -305,6 +339,41 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+// UART transmission complete ISR
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
+
+	//Check UART and give semaphore
+	if (husart->Instance == USART2) {
+		BaseType_t status = pdFALSE;
+		BaseType_t xYieldRequired = pdFALSE;
+		status = xSemaphoreGiveFromISR(uart2TxSemHandle, &xYieldRequired);
+		if (status == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
+	}
+}
+
+// Wrapper function for sending data using a stream buffer
+static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
+																						 const void *pvTxData,
+																						 size_t xDataLengthBytes,
+																						 TickType_t xTicksToWait) {
+	size_t xBytesToSend = xDataLengthBytes;
+	size_t xBytesSent = 0;
+
+	do {
+
+		// Try to send all bytes
+		xBytesSent += xStreamBufferSend(xStreamBuffer, pvTxData + xBytesSent, xBytesToSend, xTicksToWait);
+
+		// Decrement bytes to send by number of bytes already sent
+		if (xBytesSent != xBytesToSend) {
+			xBytesToSend = xDataLengthBytes - xBytesSent;
+		}
+
+	} while (xBytesSent != xDataLengthBytes);
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -323,6 +392,78 @@ void StartDefaultTask(void *argument)
     osDelay(1);
   }
   /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_cliTaskFunction */
+/**
+* @brief Function implementing the cliTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_cliTaskFunction */
+void cliTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN cliTaskFunction */
+	char cText[OUTPUT_BUFFER_LEN] = {0};
+	UBaseType_t uxCounter = 0;
+
+	for(;;)
+  {
+		snprintf(cText, sizeof(cText), "String sent using string buffer: %lu\r\n", uxCounter++);
+		vSendStringByStreamBuffer(xStreamBufferCli, cText, strnlen(cText, sizeof(cText)), pdMS_TO_TICKS(SHORT_DELAY));
+		vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+  /* USER CODE END cliTaskFunction */
+}
+
+/* USER CODE BEGIN Header_cliPrintTaskFunction */
+/**
+* @brief Function implementing the cliPrintTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_cliPrintTaskFunction */
+void cliPrintTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN cliPrintTaskFunction */
+
+	BaseType_t xStatus = pdFALSE;
+	size_t xReceiveSize = 0;
+	char cReceiveBuffer[OUTPUT_BUFFER_LEN] = {0};
+	char cSendBuffer[OUTPUT_BUFFER_LEN] = {0};
+	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
+	HAL_StatusTypeDef halStatus = HAL_OK;
+
+  for(;;)
+  {
+  	// Read stream buffer
+  	xReceiveSize = xStreamBufferReceive(xStreamBufferCli, cReceiveBuffer, OUTPUT_BUFFER_LEN, portMAX_DELAY);
+
+  	if (xReceiveSize > 0) {
+
+    	// Wait for previous transmission to complete
+    	xStatus = xSemaphoreTake(uart2TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+
+    	// Transmit bytes read from the stream buffer
+    	if (pdTRUE == xStatus)
+    	{
+    		memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
+    		halStatus = HAL_UART_Transmit_DMA(&huart2, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
+
+    		// Ensure that API call was successful
+    		if (halStatus != HAL_OK)
+    			xSemaphoreGive(uart2TxSemHandle);
+    	}
+    	else
+    	{
+				// Check USART state and call generic error handler in case of errors
+				uartState = HAL_UART_GetState(&huart2);
+				if (HAL_UART_STATE_ERROR == uartState)
+					Error_Handler();
+    	}
+  	}
+  }
+  /* USER CODE END cliPrintTaskFunction */
 }
 
 /**
