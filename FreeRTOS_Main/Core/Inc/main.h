@@ -60,6 +60,9 @@ void Error_Handler(void);
 #define STD_DELAY 250
 #define SHORT_DELAY 50
 #define OUTPUT_BUFFER_LEN 500
+#define INPUT_BUFFER_LEN 100
+#define NEWPAGE_CHAR 12
+#define DEL_CHAR 127
 #define B1_Pin GPIO_PIN_13
 #define B1_GPIO_Port GPIOC
 #define B1_EXTI_IRQn EXTI15_10_IRQn

@@ -73,7 +73,11 @@ osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
   .name = "uart2TxSem"
 };
-
+/* Definitions for uart2RxSem */
+osSemaphoreId_t uart2RxSemHandle;
+const osSemaphoreAttr_t uart2RxSem_attributes = {
+  .name = "uart2RxSem"
+};
 /* USER CODE BEGIN PV */
 StreamBufferHandle_t xStreamBufferCli = NULL;
 /* USER CODE END PV */
@@ -129,7 +133,6 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
-
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
@@ -148,6 +151,9 @@ int main(void)
   /* Create the semaphores(s) */
   /* creation of uart2TxSem */
   uart2TxSemHandle = osSemaphoreNew(1, 1, &uart2TxSem_attributes);
+
+  /* creation of uart2RxSem */
+  uart2RxSemHandle = osSemaphoreNew(1, 1, &uart2RxSem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -342,12 +348,13 @@ static void MX_GPIO_Init(void)
 // UART transmission complete ISR
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
 
+	BaseType_t xStatus = pdFALSE;
+	BaseType_t xYieldRequired = pdFALSE;
+
 	//Check UART and give semaphore
 	if (husart->Instance == USART2) {
-		BaseType_t status = pdFALSE;
-		BaseType_t xYieldRequired = pdFALSE;
-		status = xSemaphoreGiveFromISR(uart2TxSemHandle, &xYieldRequired);
-		if (status == pdTRUE) {
+		xStatus = xSemaphoreGiveFromISR(uart2TxSemHandle, &xYieldRequired);
+		if (xStatus == pdTRUE) {
 			portYIELD_FROM_ISR(xYieldRequired);
 		}
 	}
@@ -409,7 +416,7 @@ void cliTaskFunction(void *argument)
 
 	for(;;)
   {
-		snprintf(cText, sizeof(cText), "String sent using string buffer: %lu\r\n", uxCounter++);
+	  snprintf(cText, sizeof(cText), "String sent using string buffer: %lu\r\n", uxCounter++);
 		vSendStringByStreamBuffer(xStreamBufferCli, cText, strnlen(cText, sizeof(cText)), pdMS_TO_TICKS(SHORT_DELAY));
 		vTaskDelay(pdMS_TO_TICKS(1000));
   }
