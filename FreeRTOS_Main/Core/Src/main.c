@@ -26,6 +26,7 @@
 #include "semphr.h"
 #include "stdio.h"
 #include "stream_buffer.h"
+#include "FreeRTOS_CLI.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -359,6 +360,22 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
 		}
 	}
 }
+
+// UART data received ISR
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *husart) {
+
+	BaseType_t xStatus = pdFALSE;
+	BaseType_t xYieldRequired = pdFALSE;
+
+	//Check UART and give semaphore
+	if (husart->Instance == USART2) {
+		xStatus = xSemaphoreGiveFromISR(uart2RxSemHandle, &xYieldRequired);
+		if (xStatus == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
+	}
+}
+
 
 // Wrapper function for sending data using a stream buffer
 static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
