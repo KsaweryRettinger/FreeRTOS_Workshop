@@ -25,6 +25,7 @@
 #include "string.h"
 #include "semphr.h"
 #include "stdio.h"
+#include "stdlib.h"
 #include "stream_buffer.h"
 #include "FreeRTOS_CLI.h"
 /* USER CODE END Includes */
@@ -69,6 +70,13 @@ const osThreadAttr_t cliPrintTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
+/* Definitions for ledTask */
+osThreadId_t ledTaskHandle;
+const osThreadAttr_t ledTask_attributes = {
+  .name = "ledTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -80,7 +88,10 @@ const osSemaphoreAttr_t uart2RxSem_attributes = {
   .name = "uart2RxSem"
 };
 /* USER CODE BEGIN PV */
+
+// Stream buffer for passing messages between CLI tasks
 StreamBufferHandle_t xStreamBufferCli = NULL;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -91,16 +102,39 @@ static void MX_USART2_UART_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void cliPrintTaskFunction(void *argument);
+void ledTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
+
+// Wrapper for writing to the CLI stream buffer
 static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 																						 const void *pvTxData,
 																						 size_t xDataLengthBytes,
 																						 TickType_t xTicksToWait);
+
+// FreeRTOS CLI callback function prototypes
+BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// FreeRTOS CLI command structs
+const CLI_Command_Definition_t xClearCommand = {.pcCommand = "clear",
+																								.pcHelpString = "clear: \r\n Clears screen\r\n",
+																								.pxCommandInterpreter = prvClearCommand,
+																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xPrintCommand = {.pcCommand = "print",
+																								.pcHelpString = "print: \r\n Prints <word> <number of times>\r\n",
+																								.pxCommandInterpreter = prvPrintCommand,
+																								.cExpectedNumberOfParameters = 2 };
+const CLI_Command_Definition_t xLedCommand = {.pcCommand = "led",
+																								.pcHelpString = "led:\r\n Led blinking control: led [on|off]\r\n",
+																								.pxCommandInterpreter = prvLedCommand,
+																								.cExpectedNumberOfParameters = 1 };
 
 /* USER CODE END 0 */
 
@@ -120,6 +154,11 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+
+  // Register FreeRTOS CLI commands
+  FreeRTOS_CLIRegisterCommand(&xClearCommand);
+  FreeRTOS_CLIRegisterCommand(&xPrintCommand);
+  FreeRTOS_CLIRegisterCommand(&xLedCommand);
 
   /* USER CODE END Init */
 
@@ -177,6 +216,9 @@ int main(void)
 
   /* creation of cliPrintTask */
   cliPrintTaskHandle = osThreadNew(cliPrintTaskFunction, NULL, &cliPrintTask_attributes);
+
+  /* creation of ledTask */
+  ledTaskHandle = osThreadNew(ledTaskFunction, NULL, &ledTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -376,7 +418,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *husart) {
 	}
 }
 
-
 // Wrapper function for sending data using a stream buffer
 static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 																						 const void *pvTxData,
@@ -391,11 +432,54 @@ static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 		xBytesSent += xStreamBufferSend(xStreamBuffer, pvTxData + xBytesSent, xBytesToSend, xTicksToWait);
 
 		// Decrement bytes to send by number of bytes already sent
-		if (xBytesSent != xBytesToSend) {
+		if (xBytesSent != xDataLengthBytes) {
 			xBytesToSend = xDataLengthBytes - xBytesSent;
 		}
 
 	} while (xBytesSent != xDataLengthBytes);
+}
+
+// FreeRTOS CLI "clear" command
+BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	// Copy new-page character to output
+	if (xWriteBufferLen > 0)
+		strcpy(pcWriteBuffer, (char[]){NEWPAGE_CHAR, '\0'});
+
+	return pdFALSE;
+}
+
+// FreeRTOS CLI "print" command
+BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	return pdFALSE;
+}
+
+// FreeRTOS CLI "led" command
+BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	BaseType_t xParameter1StringLength = 0;
+	const char *pcParameter1 = NULL;
+
+	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
+
+	if (strncmp(pcParameter1, "on", xParameter1StringLength) == 0)
+	{
+		strcpy(pcWriteBuffer, "cli: resuming LED task\r\n");
+		vTaskResume(ledTaskHandle);
+
+	}
+	else if (strncmp(pcParameter1, "off", xParameter1StringLength) == 0)
+	{
+		strcpy(pcWriteBuffer, "cli: suspending LED task\r\n");
+		vTaskSuspend(ledTaskHandle);
+	}
+	else
+	{
+		strcpy(pcWriteBuffer, "cli: invalid command\r\nsyntax: led [on|off]\r\n");
+	}
+
+	return pdFALSE;
 }
 
 /* USER CODE END 4 */
@@ -558,6 +642,25 @@ void cliPrintTaskFunction(void *argument)
   	}
   }
   /* USER CODE END cliPrintTaskFunction */
+}
+
+/* USER CODE BEGIN Header_ledTaskFunction */
+/**
+* @brief Function implementing the ledTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ledTaskFunction */
+void ledTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN ledTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+  	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+  /* USER CODE END ledTaskFunction */
 }
 
 /**
