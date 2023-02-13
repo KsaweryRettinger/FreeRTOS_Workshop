@@ -43,7 +43,7 @@ one of the application files:
 	char cOutputBuffer[ configCOMMAND_INT_MAX_OUTPUT_SIZE ];
 */
 #ifndef configAPPLICATION_PROVIDES_cOutputBuffer
-	#define configAPPLICATION_PROVIDES_cOutputBuffer 0
+	#define configAPPLICATION_PROVIDES_cOutputBuffer 1
 #endif
 
 typedef struct xCOMMAND_INPUT_LIST

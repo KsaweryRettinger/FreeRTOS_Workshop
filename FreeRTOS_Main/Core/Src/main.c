@@ -428,14 +428,84 @@ void StartDefaultTask(void *argument)
 void cliTaskFunction(void *argument)
 {
   /* USER CODE BEGIN cliTaskFunction */
-	char cText[OUTPUT_BUFFER_LEN] = {0};
-	UBaseType_t uxCounter = 0;
+
+	// Task variables
+	BaseType_t xStatus = pdFALSE;
+	uint8_t cInputBufferIndex = 0;
+	char cInputBuffer[INPUT_BUFFER_LEN] = {0};
+	char cOutputBuffer[OUTPUT_BUFFER_LEN] = {0};
+	char cRxChar = 0;
+	char cTxChar = NEWPAGE_CHAR;
+	const char *cWelcomeMessage = "FreeRTOS Command Line Interface. \r\ntype \"help\" to view a list of commands.\r\n";
+	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
+
+	// Take Rx semaphore and initiate DMA Rx transfer
+	xSemaphoreTake(uart2RxSemHandle, portMAX_DELAY);
+	HAL_UART_Receive_DMA(&huart2, (uint8_t*)&cRxChar, 1);
+
+	// Send new-page character and welcome message to cliPrintTask
+	vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(SHORT_DELAY));
+	vSendStringByStreamBuffer(xStreamBufferCli, cWelcomeMessage, strlen(cWelcomeMessage), pdMS_TO_TICKS(SHORT_DELAY));
 
 	for(;;)
   {
-	  snprintf(cText, sizeof(cText), "String sent using string buffer: %lu\r\n", uxCounter++);
-		vSendStringByStreamBuffer(xStreamBufferCli, cText, strnlen(cText, sizeof(cText)), pdMS_TO_TICKS(SHORT_DELAY));
-		vTaskDelay(pdMS_TO_TICKS(1000));
+		// Take Rx semaphore
+		xStatus = xSemaphoreTake(uart2RxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+		if (xStatus == pdTRUE)
+		{
+			// Copy received character and initiate next DMA transfer
+			cTxChar = cRxChar;
+			HAL_UART_Receive_DMA(&huart2, (uint8_t*)&cRxChar, 1);
+
+			// Check input
+			if (cTxChar == '\r' || cTxChar == '\n')
+			{
+				// Newline received, echo carriage return and newline
+				vSendStringByStreamBuffer(xStreamBufferCli, "\r\n", strlen("\r\n"), pdMS_TO_TICKS(STD_DELAY));
+
+				// Check input buffer
+				if (cInputBufferIndex > 0)
+				{
+					do
+					{
+						// Process next command in input buffer
+						xStatus = FreeRTOS_CLIProcessCommand(cInputBuffer, cOutputBuffer, OUTPUT_BUFFER_LEN);
+
+						// Check if command was processed correctly
+						if (cOutputBuffer[0] != '\0')
+						{
+							// Send command output to the terminal and clear output buffer
+							vSendStringByStreamBuffer(xStreamBufferCli, cOutputBuffer, strnlen(cOutputBuffer, OUTPUT_BUFFER_LEN), pdMS_TO_TICKS(STD_DELAY));
+							memset(cOutputBuffer, '\0', OUTPUT_BUFFER_LEN);
+						}
+					}
+					while (xStatus != pdFALSE);
+
+					// Command processed, clear input buffer
+					memset(cInputBuffer, '\0', INPUT_BUFFER_LEN);
+					cInputBufferIndex = 0;
+				}
+			}
+			else if ((cTxChar == DEL_CHAR) && (cInputBufferIndex > 0))
+			{
+				// 'Delete' character received, remove entry from input buffer
+				cInputBuffer[--cInputBufferIndex] = '\0';
+				vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
+			}
+			else if (cInputBufferIndex < INPUT_BUFFER_LEN)
+			{
+				// Other character received
+				cInputBuffer[cInputBufferIndex++] = cTxChar;
+				vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
+			}
+		}
+		else
+		{
+			// Check USART state and call generic error handler in case of errors
+			uartState = HAL_UART_GetState(&huart2);
+			if (HAL_UART_STATE_ERROR == uartState)
+				Error_Handler();
+		}
   }
   /* USER CODE END cliTaskFunction */
 }
