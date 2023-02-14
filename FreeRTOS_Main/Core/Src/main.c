@@ -452,7 +452,40 @@ BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 // FreeRTOS CLI "print" command
 BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 
-	return pdFALSE;
+	BaseType_t xParameter1StringLength = 0;
+	BaseType_t xParameter2StringLength = 0;
+	const char *pcParameter1 = NULL;
+	const char *pcParameter2 = NULL;
+	static int32_t lCounter = 0;
+
+	// Get first parameter
+	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
+	pcParameter2 = FreeRTOS_CLIGetParameter(pcCommandString, 2, &xParameter2StringLength);
+
+	// First iteration
+	if (lCounter == 0) {
+
+		// Get number of print iterations
+		lCounter = atoi(pcParameter2);
+		if (lCounter < 1) {
+			lCounter = 0;
+			strcpy(pcWriteBuffer, "cli: invalid command, value must be > 0\r\n");
+			return pdFALSE;
+		}
+	}
+
+	// Update command output
+	strncpy(pcWriteBuffer, pcParameter1, xParameter1StringLength);
+	lCounter--;
+
+	// Check for final output
+	if (lCounter == 0) {
+		strcat(pcWriteBuffer, "\r\n");
+		return pdFALSE;
+	}
+
+	// Continue processing
+	return pdTRUE;
 }
 
 // FreeRTOS CLI "led" command
@@ -461,8 +494,10 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	BaseType_t xParameter1StringLength = 0;
 	const char *pcParameter1 = NULL;
 
+	// Get first parameter [on|off]
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
 
+	// Interpret command
 	if (strncmp(pcParameter1, "on", xParameter1StringLength) == 0)
 	{
 		strcpy(pcWriteBuffer, "cli: resuming LED task\r\n");
@@ -552,7 +587,7 @@ void cliTaskFunction(void *argument)
 				{
 					do
 					{
-						// Process next command in input buffer
+						// Process CLI command
 						xStatus = FreeRTOS_CLIProcessCommand(cInputBuffer, cOutputBuffer, OUTPUT_BUFFER_LEN);
 
 						// Check if command was processed correctly
