@@ -509,6 +509,22 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *husart) {
 	}
 }
 
+// Blue button pushed ISR
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+
+	BaseType_t xStatus = pdFALSE;
+	BaseType_t xYieldRequired = pdFALSE;
+
+	//Check UART and give semaphore
+	if (GPIO_Pin == B1_Pin) {
+		xStatus = xSemaphoreGiveFromISR(buttonSemHandle, &xYieldRequired);
+		if (xStatus == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
+	}
+}
+
+
 // Wrapper function for sending data using a stream buffer
 static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 																						 const void *pvTxData,
@@ -608,6 +624,7 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	return pdFALSE;
 }
 
+// FreeRTIS CLI "blink" command
 BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 
 	BaseType_t xParameter1StringLength = 0;
@@ -826,6 +843,59 @@ void cliPrintTaskFunction(void *argument)
   /* USER CODE END cliPrintTaskFunction */
 }
 
+/* USER CODE BEGIN Header_printTaskFunction */
+/**
+* @brief Function implementing the printTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_printTaskFunction */
+void printTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN printTaskFunction */
+	BaseType_t xStatus = pdFALSE;
+	size_t xReceiveSize = 0;
+	char cSendBuffer[OUTPUT_BUFFER_LEN] = {0};
+	char cReceiveBuffer[OUTPUT_BUFFER_LEN] = {0};
+	StringData_t printString = {0};
+	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
+	HAL_StatusTypeDef halStatus = HAL_OK;
+
+  for(;;)
+  {
+  	// Read queue
+  	xStatus = xQueueReceive(printStringQueueHandle, &printString, portMAX_DELAY);
+  	if (xStatus == pdTRUE) {
+
+  		// Copy string to local buffer and give semaphore
+  		xReceiveSize = printString.xStringSize;
+  		memcpy(cReceiveBuffer, printString.pcString, xReceiveSize);
+  		xStatus = xSemaphoreGive(printString.pStringLock);
+
+  		do {
+					// Wait for previous transmission to complete
+					xStatus = xSemaphoreTake(uart2TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+
+					// Transmit string
+					if (xStatus == pdTRUE)
+					{
+						memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
+						halStatus = HAL_UART_Transmit_DMA(&huart2, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
+						if (halStatus != HAL_OK)
+							xSemaphoreGive(uart2TxSemHandle);
+					}
+					else
+					{
+						// Check UART for errors
+						uartState = HAL_UART_GetState(&huart2);
+						if (HAL_UART_STATE_ERROR == uartState)
+							Error_Handler();
+					}
+  		} while (xStatus != pdTRUE);
+  	}
+  /* USER CODE END printTaskFunction */
+}
+
 /* USER CODE BEGIN Header_ledTaskFunction */
 /**
 * @brief Function implementing the ledTask thread.
@@ -862,24 +932,6 @@ void ledTaskFunction(void *argument)
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
   }
   /* USER CODE END ledTaskFunction */
-}
-
-/* USER CODE BEGIN Header_printTaskFunction */
-/**
-* @brief Function implementing the printTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_printTaskFunction */
-void printTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN printTaskFunction */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END printTaskFunction */
 }
 
 /* USER CODE BEGIN Header_buttonTaskFunction */
