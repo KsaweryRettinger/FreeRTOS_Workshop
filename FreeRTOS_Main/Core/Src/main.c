@@ -27,6 +27,7 @@
 #include "stdlib.h"
 #include "semphr.h"
 #include "queue.h"
+#include "stdarg.h"
 #include "stream_buffer.h"
 #include "FreeRTOS_CLI.h"
 /* USER CODE END Includes */
@@ -97,6 +98,11 @@ osMessageQueueId_t blinkPeriodQueueHandle;
 const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
   .name = "blinkPeriodQueue"
 };
+/* Definitions for printStringQueue */
+osMessageQueueId_t printStringQueueHandle;
+const osMessageQueueAttr_t printStringQueue_attributes = {
+  .name = "printStringQueue"
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -106,6 +112,16 @@ const osSemaphoreAttr_t uart2TxSem_attributes = {
 osSemaphoreId_t uart2RxSemHandle;
 const osSemaphoreAttr_t uart2RxSem_attributes = {
   .name = "uart2RxSem"
+};
+/* Definitions for buttonSem */
+osSemaphoreId_t buttonSemHandle;
+const osSemaphoreAttr_t buttonSem_attributes = {
+  .name = "buttonSem"
+};
+/* Definitions for buttonPrintSem */
+osSemaphoreId_t buttonPrintSemHandle;
+const osSemaphoreAttr_t buttonPrintSem_attributes = {
+  .name = "buttonPrintSem"
 };
 /* USER CODE BEGIN PV */
 
@@ -122,11 +138,19 @@ typedef union {
 	uint32_t ui;
 } unDataValue;
 
-// Structure sent via queue
+// Structure for sending different data types via queue
 typedef struct {
 	eDataType type;
 	unDataValue value;
 } Data_t;
+
+// Structure for sending strings via queue
+typedef struct {
+	char *pcString;
+	size_t xStringSize;
+	size_t xStringMaxSize;
+	SemaphoreHandle_t pStringLock;
+} StringData_t;
 
 /* USER CODE END PV */
 
@@ -155,6 +179,10 @@ BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+
+// Utility functions for sending strings via queue
+static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
+static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, QueueHandle_t printStringQueue, char *pcPrintString, ...);
 
 /* USER CODE END PFP */
 
@@ -239,6 +267,12 @@ int main(void)
   /* creation of uart2RxSem */
   uart2RxSemHandle = osSemaphoreNew(1, 1, &uart2RxSem_attributes);
 
+  /* creation of buttonSem */
+  buttonSemHandle = osSemaphoreNew(1, 1, &buttonSem_attributes);
+
+  /* creation of buttonPrintSem */
+  buttonPrintSemHandle = osSemaphoreNew(1, 1, &buttonPrintSem_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -250,6 +284,9 @@ int main(void)
   /* Create the queue(s) */
   /* creation of blinkPeriodQueue */
   blinkPeriodQueueHandle = osMessageQueueNew (1, sizeof(Data_t), &blinkPeriodQueue_attributes);
+
+  /* creation of printStringQueue */
+  printStringQueueHandle = osMessageQueueNew (10, sizeof(StringData_t), &printStringQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -598,6 +635,33 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	}
 
 	return pdFALSE;
+}
+
+static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock) {
+	pPrintStringData->pcString = pcString;
+	pPrintStringData->xStringMaxSize = xStringMaxSize;
+	pPrintStringData->pStringLock = pStringLock;
+}
+
+static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, QueueHandle_t printStringQueue, char *pcPrintString, ...) {
+
+	BaseType_t xStatus = pdFALSE;
+
+	// Take semaphore to protect data in source string
+	xStatus = xSemaphoreTake(pPrintStringData->pStringLock, pdMS_TO_TICKS(STD_DELAY));
+	if (xStatus == pdTRUE) {
+
+		// Construct string using additional function arguments
+		va_list pAarg;
+		va_start(pAarg, pcPrintString);
+		pPrintStringData->xStringSize = vsnprintf(pPrintStringData->pcString, pPrintStringData->xStringMaxSize, pcPrintString, pAarg);
+		va_end(pAarg);
+
+		// Send data to print task queue
+		xStatus = xQueueSend(printStringQueue, pPrintStringData, pdMS_TO_TICKS(STD_DELAY));
+	}
+
+	return xStatus;
 }
 
 /* USER CODE END 4 */
