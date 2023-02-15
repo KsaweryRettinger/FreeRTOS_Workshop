@@ -78,6 +78,20 @@ const osThreadAttr_t ledTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for printTask */
+osThreadId_t printTaskHandle;
+const osThreadAttr_t printTask_attributes = {
+  .name = "printTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for buttonTask */
+osThreadId_t buttonTaskHandle;
+const osThreadAttr_t buttonTask_attributes = {
+  .name = "buttonTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for blinkPeriodQueue */
 osMessageQueueId_t blinkPeriodQueueHandle;
 const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
@@ -125,6 +139,8 @@ void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void cliPrintTaskFunction(void *argument);
 void ledTaskFunction(void *argument);
+void printTaskFunction(void *argument);
+void buttonTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -251,6 +267,12 @@ int main(void)
 
   /* creation of ledTask */
   ledTaskHandle = osThreadNew(ledTaskFunction, NULL, &ledTask_attributes);
+
+  /* creation of printTask */
+  printTaskHandle = osThreadNew(printTaskFunction, NULL, &printTask_attributes);
+
+  /* creation of buttonTask */
+  buttonTaskHandle = osThreadNew(buttonTaskFunction, NULL, &buttonTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -776,6 +798,42 @@ void ledTaskFunction(void *argument)
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
   }
   /* USER CODE END ledTaskFunction */
+}
+
+/* USER CODE BEGIN Header_printTaskFunction */
+/**
+* @brief Function implementing the printTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_printTaskFunction */
+void printTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN printTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END printTaskFunction */
+}
+
+/* USER CODE BEGIN Header_buttonTaskFunction */
+/**
+* @brief Function implementing the buttonTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_buttonTaskFunction */
+void buttonTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN buttonTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END buttonTaskFunction */
 }
 
 /**
