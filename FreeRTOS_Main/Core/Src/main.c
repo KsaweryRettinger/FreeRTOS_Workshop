@@ -23,9 +23,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "string.h"
-#include "semphr.h"
 #include "stdio.h"
 #include "stdlib.h"
+#include "semphr.h"
+#include "queue.h"
 #include "stream_buffer.h"
 #include "FreeRTOS_CLI.h"
 /* USER CODE END Includes */
@@ -77,6 +78,11 @@ const osThreadAttr_t ledTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for blinkPeriodQueue */
+osMessageQueueId_t blinkPeriodQueueHandle;
+const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
+  .name = "blinkPeriodQueue"
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -91,6 +97,22 @@ const osSemaphoreAttr_t uart2RxSem_attributes = {
 
 // Stream buffer for passing messages between CLI tasks
 StreamBufferHandle_t xStreamBufferCli = NULL;
+
+// Enum with different data types sent via queue
+typedef enum {
+	BLINK_PERIOD
+} eDataType;
+
+// Union for sending different data types via queue
+typedef union {
+	uint32_t ui;
+} unDataValue;
+
+// Structure sent via queue
+typedef struct {
+	eDataType type;
+	unDataValue value;
+} Data_t;
 
 /* USER CODE END PV */
 
@@ -116,6 +138,7 @@ static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 /* USER CODE END PFP */
 
@@ -134,6 +157,10 @@ const CLI_Command_Definition_t xPrintCommand = {.pcCommand = "print",
 const CLI_Command_Definition_t xLedCommand = {.pcCommand = "led",
 																								.pcHelpString = "led:\r\n Led blinking control: led [on|off]\r\n",
 																								.pxCommandInterpreter = prvLedCommand,
+																								.cExpectedNumberOfParameters = 1 };
+const CLI_Command_Definition_t xBlinkCommand = {.pcCommand = "blink",
+																								.pcHelpString = "blink:\r\n Set led blinking period in ms: blink <time>\r\n",
+																								.pxCommandInterpreter = prvBlinkCommand,
 																								.cExpectedNumberOfParameters = 1 };
 
 /* USER CODE END 0 */
@@ -155,10 +182,15 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
+  // Create and reset stream buffer for printing CLI output with trigger level 1
+  xStreamBufferCli = xStreamBufferCreate(OUTPUT_BUFFER_LEN, 1);
+  xStreamBufferReset(xStreamBufferCli);
+
   // Register FreeRTOS CLI commands
   FreeRTOS_CLIRegisterCommand(&xClearCommand);
   FreeRTOS_CLIRegisterCommand(&xPrintCommand);
   FreeRTOS_CLIRegisterCommand(&xLedCommand);
+  FreeRTOS_CLIRegisterCommand(&xBlinkCommand);
 
   /* USER CODE END Init */
 
@@ -174,10 +206,6 @@ int main(void)
   MX_DMA_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
-  // Create and reset stream buffer for printing CLI output with trigger level 1
-  xStreamBufferCli = xStreamBufferCreate(OUTPUT_BUFFER_LEN, 1);
-  xStreamBufferReset(xStreamBufferCli);
 
   /* USER CODE END 2 */
 
@@ -202,6 +230,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of blinkPeriodQueue */
+  blinkPeriodQueueHandle = osMessageQueueNew (1, sizeof(Data_t), &blinkPeriodQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -494,7 +526,7 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	BaseType_t xParameter1StringLength = 0;
 	const char *pcParameter1 = NULL;
 
-	// Get first parameter [on|off]
+	// Get first parameter - LED on/off
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
 
 	// Interpret command
@@ -512,6 +544,35 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	else
 	{
 		strcpy(pcWriteBuffer, "cli: invalid command\r\nsyntax: led [on|off]\r\n");
+	}
+
+	return pdFALSE;
+}
+
+BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	BaseType_t xParameter1StringLength = 0;
+	const char *pcParameter1 = NULL;
+	Data_t blinkPeriodData = {.type = BLINK_PERIOD, .value.ui = 0};
+
+	// Get first parameter - LED blink period in ms
+	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
+
+	// Get LED blink period
+	blinkPeriodData.value.ui = (uint32_t)atoi(pcParameter1);
+
+	// Reset queue and send new blink period
+	xQueueReset(blinkPeriodQueueHandle);
+	xQueueSend(blinkPeriodQueueHandle, &blinkPeriodData, 0);
+
+	// Abort LED task delay
+	xTaskAbortDelay(ledTaskHandle);
+	snprintf(pcWriteBuffer, xWriteBufferLen, "cli: setting blinking period to %lu ms\r\n", blinkPeriodData.value.ui);
+
+	// Resume LED task if it was suspended
+	if (eTaskGetState(ledTaskHandle) == eSuspended) {
+		vTaskResume(ledTaskHandle);
+		strncat(pcWriteBuffer, "cli: resuming led blink task\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
 	}
 
 	return pdFALSE;
@@ -690,10 +751,29 @@ void ledTaskFunction(void *argument)
 {
   /* USER CODE BEGIN ledTaskFunction */
   /* Infinite loop */
-  for(;;)
+	BaseType_t xStatus = pdFALSE;
+	uint32_t uiBlinkPeriod = STD_DELAY;
+	TickType_t xLastWakeTime = 0;
+	Data_t receiveData = {0};
+
+	for(;;)
   {
+		// Save wake time in ticks
+		xLastWakeTime = xTaskGetTickCount();
+
+		// Read data from queue and update blink period
+		xStatus = xQueueReceive(blinkPeriodQueueHandle, &receiveData, 0);
+		if (xStatus == pdTRUE) {
+			if (receiveData.type == BLINK_PERIOD) {
+				uiBlinkPeriod = receiveData.value.ui;
+			}
+		}
+
+		// Toggle LED
   	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-    vTaskDelay(pdMS_TO_TICKS(500));
+
+  	// Delay next toggle until precise time
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
   }
   /* USER CODE END ledTaskFunction */
 }
