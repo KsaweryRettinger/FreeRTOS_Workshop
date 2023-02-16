@@ -894,6 +894,7 @@ void printTaskFunction(void *argument)
   		} while (xStatus != pdTRUE);
   	}
   /* USER CODE END printTaskFunction */
+  }
 }
 
 /* USER CODE BEGIN Header_ledTaskFunction */
@@ -944,10 +945,34 @@ void ledTaskFunction(void *argument)
 void buttonTaskFunction(void *argument)
 {
   /* USER CODE BEGIN buttonTaskFunction */
-  /* Infinite loop */
+  BaseType_t xStatus = pdFALSE;
+  StringData_t printString = {0};
+  char cText[OUTPUT_BUFFER_LEN] = {0};
+
+  // Initialize string data structure
+  vInitPrintStringData(&printString, cText, sizeof(cText), buttonPrintSemHandle);
+
+  // Initialize button pressed semaphore
+  xSemaphoreTake(buttonSemHandle, 0);
+
   for(;;)
   {
-    osDelay(1);
+  	// Wait for button press
+  	xStatus = xSemaphoreTake(buttonSemHandle, pdMS_TO_TICKS(STD_DELAY));
+   	if (xStatus == pdTRUE) {
+
+   		// Suspend/resume LED task and send message to terminal
+   		if (eTaskGetState(ledTaskHandle) != eSuspended) {
+   			vTaskSuspend(ledTaskHandle);
+   			xSendStringByQueue(&printString, printStringQueueHandle, "buttonTask - LED blink task suspended\r\n");
+   		} else {
+   			vTaskResume(ledTaskHandle);
+   			xSendStringByQueue(&printString, printStringQueueHandle, "buttonTask - LED blink task resumed\r\n");
+   		}
+
+   		// Delay task to minimize noise from button
+   		vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
+  	}
   }
   /* USER CODE END buttonTaskFunction */
 }
