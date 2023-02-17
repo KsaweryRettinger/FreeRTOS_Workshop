@@ -215,6 +215,7 @@ BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 // Utility functions for sending strings via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
@@ -242,6 +243,10 @@ const CLI_Command_Definition_t xBlinkCommand = {.pcCommand = "blink",
 																								.pcHelpString = "blink:\r\n Set led blinking period in ms: blink <time>\r\n",
 																								.pxCommandInterpreter = prvBlinkCommand,
 																								.cExpectedNumberOfParameters = 1 };
+const CLI_Command_Definition_t xTempCommand = {.pcCommand = "temp",
+																								.pcHelpString = "temp:\r\n measures CPU temperature\r\n",
+																								.pxCommandInterpreter = prvCpuTempCommand,
+																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
 
@@ -271,6 +276,7 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xPrintCommand);
   FreeRTOS_CLIRegisterCommand(&xLedCommand);
   FreeRTOS_CLIRegisterCommand(&xBlinkCommand);
+  FreeRTOS_CLIRegisterCommand(&xTempCommand);
 
   /* USER CODE END Init */
 
@@ -782,6 +788,13 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	return pdFALSE;
 }
 
+// FreeRTOS CLI "temp" command
+BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+	vTaskResume(cpuTempTaskHandle);
+	strncpy(pcWriteBuffer, "cli: resuming cpuTempTask\r\n", xWriteBufferLen);
+	return pdFALSE;
+}
+
 // Initializes string data to be sent via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock) {
 	pPrintStringData->pcString = pcString;
@@ -1163,9 +1176,46 @@ void buttonTaskFunction(void *argument)
 void cpuTempTaskFunction(void *argument)
 {
   /* USER CODE BEGIN cpuTempTaskFunction */
+
+	// Local variables and buffers
+	BaseType_t xStatus = pdFALSE;
+	uint16_t sAdc1Value[2] = {0};
+	uint16_t *psVRefRead = &sAdc1Value[0];
+	uint16_t *psTempSenRead = &sAdc1Value[1];
+
+	// Reference registers
+	uint16_t *psVddRefCalVal = (uint16_t *) 0x1FFF7A2A;
+	uint16_t *psAdcTempRefVal30 = (uint16_t *) 0x1FFF7A2C;
+	uint16_t *psAdcTempRefVal110 = (uint16_t *) 0x1FFF7A2E;
+
+	// Temperature calculations
+	float fVAtTemp30 = (*psAdcTempRefVal30 * VDD) / MAX_ADC_VAL_12_BITS;
+	float fVAtTemp110 = (*psAdcTempRefVal110 * VDD) / MAX_ADC_VAL_12_BITS;
+	float fVTempSenSlope = (fVAtTemp30 - fVAtTemp110) / TEMP_110_MINUS_30;
+	float fVdda = 0.0;
+	float fVTempSens = 0.0;
+	float fCpuTemp = 0.0;
+
+	// Text buffer and string data
+	char cText[OUTPUT_BUFFER_LEN] = {0};
+	StringData_t printString = {0};
+	vInitPrintStringData(&printString, cText, sizeof(cText), cpuTempPrintSemHandle);
+
   for(;;)
   {
-    osDelay(1);
+    vTaskSuspend(NULL);
+
+    // Start ADC readings and wait for completion
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t *) sAdc1Read, 2);
+    xStatus = xQueueReceive(cpuTempQueueHandle, sAdc1Value, pdMS_TO_TICKS(100));
+
+    // Calculate temperature
+    if (xStatus == pdTRUE) {
+    	fVdda = (VDD * (*psVddRefCalVal)) / *psVRefRead;
+    	fVTempSens = (*psTempSenRead * fVdda) / MAX_ADC_VAL_12_BITS;
+    	fCpuTemp = ((fVAtTemp30 - fVTempSens) / fVTempSenSlope) + TEMP_30;
+    	xSendStringByQueue(&printString, printStringQueueHandle, "cpuTempTask: CPU temp %.2fC\r\n", fCpuTemp);
+    }
   }
   /* USER CODE END cpuTempTaskFunction */
 }
