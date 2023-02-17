@@ -35,10 +35,40 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+// Enum with different data types sent via queue
+typedef enum {
+	BLINK_PERIOD
+} eDataType;
+
+// Union for sending different data types via queue
+typedef union {
+	uint32_t ui;
+} unDataValue;
+
+// Structure for sending different data types via queue
+typedef struct {
+	eDataType type;
+	unDataValue value;
+} Data_t;
+
+// Structure for sending strings via queue
+typedef struct {
+	char *pcString;
+	size_t xStringSize;
+	size_t xStringMaxSize;
+	SemaphoreHandle_t pStringLock;
+} StringData_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define VDD (3.3)
+#define MAX_ADC_VAL_12_BITS (4095)
+#define TEMP_30 (30.0)
+#define TEMP_110_MINUS_30 (80.0)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,6 +77,9 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
@@ -93,6 +126,13 @@ const osThreadAttr_t buttonTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for cpuTempTask */
+osThreadId_t cpuTempTaskHandle;
+const osThreadAttr_t cpuTempTask_attributes = {
+  .name = "cpuTempTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for blinkPeriodQueue */
 osMessageQueueId_t blinkPeriodQueueHandle;
 const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
@@ -107,6 +147,11 @@ const osMessageQueueAttr_t printStringQueue_attributes = {
 osMessageQueueId_t printDataQueueHandle;
 const osMessageQueueAttr_t printDataQueue_attributes = {
   .name = "printDataQueue"
+};
+/* Definitions for cpuTempQueue */
+osMessageQueueId_t cpuTempQueueHandle;
+const osMessageQueueAttr_t cpuTempQueue_attributes = {
+  .name = "cpuTempQueue"
 };
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
@@ -128,34 +173,18 @@ osSemaphoreId_t buttonPrintSemHandle;
 const osSemaphoreAttr_t buttonPrintSem_attributes = {
   .name = "buttonPrintSem"
 };
+/* Definitions for cpuTempPrintSem */
+osSemaphoreId_t cpuTempPrintSemHandle;
+const osSemaphoreAttr_t cpuTempPrintSem_attributes = {
+  .name = "cpuTempPrintSem"
+};
 /* USER CODE BEGIN PV */
 
 // Stream buffer for passing messages between CLI tasks
 StreamBufferHandle_t xStreamBufferCli = NULL;
 
-// Enum with different data types sent via queue
-typedef enum {
-	BLINK_PERIOD
-} eDataType;
-
-// Union for sending different data types via queue
-typedef union {
-	uint32_t ui;
-} unDataValue;
-
-// Structure for sending different data types via queue
-typedef struct {
-	eDataType type;
-	unDataValue value;
-} Data_t;
-
-// Structure for sending strings via queue
-typedef struct {
-	char *pcString;
-	size_t xStringSize;
-	size_t xStringMaxSize;
-	SemaphoreHandle_t pStringLock;
-} StringData_t;
+// Array for storing ADC readings
+uint16_t sAdc1Read[2] = {0};
 
 /* USER CODE END PV */
 
@@ -164,12 +193,14 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_ADC1_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void cliPrintTaskFunction(void *argument);
 void ledTaskFunction(void *argument);
 void printTaskFunction(void *argument);
 void buttonTaskFunction(void *argument);
+void cpuTempTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -254,6 +285,7 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -278,6 +310,9 @@ int main(void)
   /* creation of buttonPrintSem */
   buttonPrintSemHandle = osSemaphoreNew(1, 1, &buttonPrintSem_attributes);
 
+  /* creation of cpuTempPrintSem */
+  cpuTempPrintSemHandle = osSemaphoreNew(1, 1, &cpuTempPrintSem_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -295,6 +330,9 @@ int main(void)
 
   /* creation of printDataQueue */
   printDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &printDataQueue_attributes);
+
+  /* creation of cpuTempQueue */
+  cpuTempQueueHandle = osMessageQueueNew (1, 4, &cpuTempQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -318,6 +356,9 @@ int main(void)
 
   /* creation of buttonTask */
   buttonTaskHandle = osThreadNew(buttonTaskFunction, NULL, &buttonTask_attributes);
+
+  /* creation of cpuTempTask */
+  cpuTempTaskHandle = osThreadNew(cpuTempTaskFunction, NULL, &cpuTempTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -397,6 +438,67 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV8;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 2;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_VREFINT;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -437,6 +539,7 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream5_IRQn interrupt configuration */
@@ -445,6 +548,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
 
 }
 
@@ -532,6 +638,20 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	}
 }
 
+// ADC1 conversion complete ISR
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
+
+	BaseType_t xStatus = pdFALSE;
+	BaseType_t xYieldRequired = pdFALSE;
+
+	//Check UART and give semaphore
+	if (hadc->Instance == ADC1) {
+		xStatus = xQueueOverwriteFromISR(cpuTempQueueHandle, sAdc1Read, &xYieldRequired);
+		if (xStatus == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
+	}
+}
 
 // Wrapper function for sending data using a stream buffer
 static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
@@ -879,7 +999,7 @@ void ledTaskFunction(void *argument)
 		if (xStatus == pdTRUE) {
 			if (receiveData.type == BLINK_PERIOD) {
 				uiBlinkPeriod = receiveData.value.ui;
-				xQueueSend(printDataQueueHandle, &receivedData, portMAX_DELAY);
+				xQueueSend(printDataQueueHandle, &receiveData, portMAX_DELAY);
 			}
 		}
 
@@ -1031,6 +1151,23 @@ void buttonTaskFunction(void *argument)
   	}
   }
   /* USER CODE END buttonTaskFunction */
+}
+
+/* USER CODE BEGIN Header_cpuTempTaskFunction */
+/**
+* @brief Function implementing the cpuTempTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_cpuTempTaskFunction */
+void cpuTempTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN cpuTempTaskFunction */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END cpuTempTaskFunction */
 }
 
 /**
