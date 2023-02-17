@@ -103,6 +103,11 @@ osMessageQueueId_t printStringQueueHandle;
 const osMessageQueueAttr_t printStringQueue_attributes = {
   .name = "printStringQueue"
 };
+/* Definitions for printDataQueue */
+osMessageQueueId_t printDataQueueHandle;
+const osMessageQueueAttr_t printDataQueue_attributes = {
+  .name = "printDataQueue"
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -287,6 +292,9 @@ int main(void)
 
   /* creation of printStringQueue */
   printStringQueueHandle = osMessageQueueNew (10, sizeof(StringData_t), &printStringQueue_attributes);
+
+  /* creation of printDataQueue */
+  printDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &printDataQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -624,7 +632,7 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	return pdFALSE;
 }
 
-// FreeRTIS CLI "blink" command
+// FreeRTOS CLI "blink" command
 BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 
 	BaseType_t xParameter1StringLength = 0;
@@ -654,12 +662,14 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	return pdFALSE;
 }
 
+// Initializes string data to be sent via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock) {
 	pPrintStringData->pcString = pcString;
 	pPrintStringData->xStringMaxSize = xStringMaxSize;
 	pPrintStringData->pStringLock = pStringLock;
 }
 
+// Constructs string data object from multiple arguments and sends via queue
 static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, QueueHandle_t printStringQueue, char *pcPrintString, ...) {
 
 	BaseType_t xStatus = pdFALSE;
@@ -843,60 +853,6 @@ void cliPrintTaskFunction(void *argument)
   /* USER CODE END cliPrintTaskFunction */
 }
 
-/* USER CODE BEGIN Header_printTaskFunction */
-/**
-* @brief Function implementing the printTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_printTaskFunction */
-void printTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN printTaskFunction */
-	BaseType_t xStatus = pdFALSE;
-	size_t xReceiveSize = 0;
-	char cSendBuffer[OUTPUT_BUFFER_LEN] = {0};
-	char cReceiveBuffer[OUTPUT_BUFFER_LEN] = {0};
-	StringData_t printString = {0};
-	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
-	HAL_StatusTypeDef halStatus = HAL_OK;
-
-  for(;;)
-  {
-  	// Read queue
-  	xStatus = xQueueReceive(printStringQueueHandle, &printString, portMAX_DELAY);
-  	if (xStatus == pdTRUE) {
-
-  		// Copy string to local buffer and give semaphore
-  		xReceiveSize = printString.xStringSize;
-  		memcpy(cReceiveBuffer, printString.pcString, xReceiveSize);
-  		xStatus = xSemaphoreGive(printString.pStringLock);
-
-  		do {
-					// Wait for previous transmission to complete
-					xStatus = xSemaphoreTake(uart2TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
-
-					// Transmit string
-					if (xStatus == pdTRUE)
-					{
-						memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
-						halStatus = HAL_UART_Transmit_DMA(&huart2, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
-						if (halStatus != HAL_OK)
-							xSemaphoreGive(uart2TxSemHandle);
-					}
-					else
-					{
-						// Check UART for errors
-						uartState = HAL_UART_GetState(&huart2);
-						if (HAL_UART_STATE_ERROR == uartState)
-							Error_Handler();
-					}
-  		} while (xStatus != pdTRUE);
-  	}
-  /* USER CODE END printTaskFunction */
-  }
-}
-
 /* USER CODE BEGIN Header_ledTaskFunction */
 /**
 * @brief Function implementing the ledTask thread.
@@ -923,6 +879,7 @@ void ledTaskFunction(void *argument)
 		if (xStatus == pdTRUE) {
 			if (receiveData.type == BLINK_PERIOD) {
 				uiBlinkPeriod = receiveData.value.ui;
+				xQueueSend(printDataQueueHandle, &receivedData, portMAX_DELAY);
 			}
 		}
 
@@ -933,6 +890,105 @@ void ledTaskFunction(void *argument)
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
   }
   /* USER CODE END ledTaskFunction */
+}
+
+/* USER CODE BEGIN Header_printTaskFunction */
+/**
+* @brief Function implementing the printTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_printTaskFunction */
+void printTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN printTaskFunction */
+
+	// Status variables
+	BaseType_t xStatus = pdFALSE;
+	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
+	HAL_StatusTypeDef halStatus = HAL_OK;
+
+	// Local buffers
+	size_t xReceiveSize = 0;
+	char cSendBuffer[OUTPUT_BUFFER_LEN] = {0};
+	char cReceiveBuffer[OUTPUT_BUFFER_LEN] = {0};
+
+	// Queue data objects
+	StringData_t printString = {0};
+	Data_t printData = {0};
+
+	// Queue set handles
+	QueueSetHandle_t xPrintQueueSet = NULL;
+	QueueSetMemberHandle_t xActivatedQueue = NULL;
+
+	// Initialize queue set
+	xPrintQueueSet = xQueueCreateSet(QUEUE_SIZE * 2);
+	xQueueAddToSet(printStringQueueHandle, xPrintQueueSet);
+	xQueueAddToSet(printDataQueueHandle, xPrintQueueSet);
+
+  for(;;)
+  {
+  	// Read queue set
+  	xActivatedQueue = xQueueSelectFromSet(xPrintQueueSet, portMAX_DELAY);
+
+  	// Handle different queue types
+  	if (xActivatedQueue == printStringQueueHandle)
+  	{
+  		// Read string queue
+    	xStatus = xQueueReceive(printStringQueueHandle, &printString, 0);
+    	if (xStatus == pdTRUE) {
+
+    		// Copy string to local buffer and give semaphore
+    		xReceiveSize = printString.xStringSize;
+    		memcpy(cReceiveBuffer, printString.pcString, xReceiveSize);
+    		xStatus = xSemaphoreGive(printString.pStringLock);
+    	}
+  	}
+  	else if (xActivatedQueue == printDataQueueHandle)
+  	{
+  		// Read string queue
+    	xStatus = xQueueReceive(printDataQueueHandle, &printData, 0);
+    	if (xStatus == pdTRUE) {
+    		switch (printData.type) {
+    			case BLINK_PERIOD:
+    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "printTask: Blink period %li\r\n", printData.value.ui);
+    				break;
+    			default:
+    				// Unsupported data type
+    				xStatus = pdFALSE;
+    		}
+    	}
+  	}
+  	else
+  	{
+  		// Unknown queue type, skip printing data via UART
+  		xStatus = pdFALSE;
+  	}
+
+  	// Transmit data via UART
+  	if (xStatus == pdTRUE)
+  	{
+  		do {
+				// Wait for previous transmission to complete
+				xStatus = xSemaphoreTake(uart2TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+				if (xStatus == pdTRUE)
+				{
+					memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
+					halStatus = HAL_UART_Transmit_DMA(&huart2, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
+					if (halStatus != HAL_OK)
+						xSemaphoreGive(uart2TxSemHandle);
+				}
+				else
+				{
+					// Check UART for errors
+					uartState = HAL_UART_GetState(&huart2);
+					if (HAL_UART_STATE_ERROR == uartState)
+						Error_Handler();
+				}
+			} while (xStatus != pdTRUE);
+		}
+  }
+  /* USER CODE END printTaskFunction */
 }
 
 /* USER CODE BEGIN Header_buttonTaskFunction */
