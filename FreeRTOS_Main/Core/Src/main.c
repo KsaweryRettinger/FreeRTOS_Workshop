@@ -180,13 +180,17 @@ osSemaphoreId_t cpuTempPrintSemHandle;
 const osSemaphoreAttr_t cpuTempPrintSem_attributes = {
   .name = "cpuTempPrintSem"
 };
+/* Definitions for adc1Sem */
+osSemaphoreId_t adc1SemHandle;
+const osSemaphoreAttr_t adc1Sem_attributes = {
+  .name = "adc1Sem"
+};
 /* USER CODE BEGIN PV */
 
 // Stream buffer for passing messages between CLI tasks
 StreamBufferHandle_t xStreamBufferCli = NULL;
 
-// Arrays for storing ADC readings
-uint16_t sAdc1Read[2] = {0};
+// Array for storing jostick ADC readings
 uint16_t sAdc2Read[2] = {0};
 
 /* USER CODE END PV */
@@ -300,7 +304,7 @@ int main(void)
   xStreamBufferReset(xStreamBufferCli);
 
   // Start continuous ADC conversions for joystick
-  HAL_ADC_Start_DMA(&hadc2, (uint32_t *)&sAdc2Read[0], 2);
+  // HAL_ADC_Start_DMA(&hadc2, (uint32_t *)&sAdc2Read[0], 2);
 
   /* USER CODE END 2 */
 
@@ -326,6 +330,9 @@ int main(void)
 
   /* creation of cpuTempPrintSem */
   cpuTempPrintSemHandle = osSemaphoreNew(1, 1, &cpuTempPrintSem_attributes);
+
+  /* creation of adc1Sem */
+  adc1SemHandle = osSemaphoreNew(1, 1, &adc1Sem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -724,7 +731,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 	//Check UART and give semaphore
 	if (hadc->Instance == ADC1) {
-		xStatus = xQueueOverwriteFromISR(cpuTempQueueHandle, sAdc1Read, &xYieldRequired);
+		xStatus = xSemaphoreGiveFromISR(adc1SemHandle, &xYieldRequired);
+		vTaskNotifyGiveFromISR(cpuTempTaskHandle, &xYieldRequired);
 		if (xStatus == pdTRUE) {
 			portYIELD_FROM_ISR(xYieldRequired);
 		}
@@ -1254,6 +1262,7 @@ void cpuTempTaskFunction(void *argument)
 	uint16_t sAdc1Value[2] = {0};
 	uint16_t *psVRefRead = &sAdc1Value[0];
 	uint16_t *psTempSenRead = &sAdc1Value[1];
+	BaseType_t xNotification = 0;
 
 	// Reference registers
 	uint16_t *psVddRefCalVal = (uint16_t *) 0x1FFF7A2A;
@@ -1271,22 +1280,27 @@ void cpuTempTaskFunction(void *argument)
 	// Text buffer and string data
 	char cText[OUTPUT_BUFFER_LEN] = {0};
 	StringData_t printString = {0};
+
 	vInitPrintStringData(&printString, cText, sizeof(cText), cpuTempPrintSemHandle);
 
   for(;;)
   {
     vTaskSuspend(NULL);
+    xStatus = xSemaphoreTake(adc1SemHandle, pdMS_TO_TICKS(STD_DELAY));
 
-    // Start ADC readings and wait for completion
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t *) sAdc1Read, 2);
-    xStatus = xQueueReceive(cpuTempQueueHandle, sAdc1Value, pdMS_TO_TICKS(100));
-
-    // Calculate temperature
     if (xStatus == pdTRUE) {
-    	fVdda = (VDD * (*psVddRefCalVal)) / *psVRefRead;
-    	fVTempSens = (*psTempSenRead * fVdda) / MAX_ADC_VAL_12_BITS;
-    	fCpuTemp = ((fVAtTemp30 - fVTempSens) / fVTempSenSlope) + TEMP_30;
-    	xSendStringByQueue(&printString, printStringQueueHandle, "cpuTempTask: CPU temp %.2fC\r\n", fCpuTemp);
+
+    	// Start ADC readings and wait for notification from ISR
+    	HAL_ADC_Start_DMA(&hadc1, (uint32_t *) sAdc1Value, 2);
+    	xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
+
+    	// Calculate temperature and print results
+    	if (xNotification != 0) {
+				fVdda = (VDD * (*psVddRefCalVal)) / *psVRefRead;
+				fVTempSens = (*psTempSenRead * fVdda) / MAX_ADC_VAL_12_BITS;
+				fCpuTemp = ((fVAtTemp30 - fVTempSens) / fVTempSenSlope) + TEMP_30;
+				xSendStringByQueue(&printString, printStringQueueHandle, "cpuTempTask: CPU temp %.2fC\r\n", fCpuTemp);
+    	}
     }
   }
   /* USER CODE END cpuTempTaskFunction */
