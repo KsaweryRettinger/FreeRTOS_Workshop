@@ -83,6 +83,10 @@ void Error_Handler(void);
 #define TCK_GPIO_Port GPIOA
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
+#define AccelGyro_SDA_Pin GPIO_PIN_7
+#define AccelGyro_SDA_GPIO_Port GPIOB
+#define AccelGyro_SCL_Pin GPIO_PIN_8
+#define AccelGyro_SCL_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

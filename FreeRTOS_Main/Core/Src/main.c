@@ -82,6 +82,10 @@ ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
 DMA_HandleTypeDef hdma_adc2;
 
+I2C_HandleTypeDef hi2c1;
+DMA_HandleTypeDef hdma_i2c1_rx;
+DMA_HandleTypeDef hdma_i2c1_tx;
+
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
@@ -135,6 +139,13 @@ const osThreadAttr_t cpuTempTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for accelGyroTask */
+osThreadId_t accelGyroTaskHandle;
+const osThreadAttr_t accelGyroTask_attributes = {
+  .name = "accelGyroTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for blinkPeriodQueue */
 osMessageQueueId_t blinkPeriodQueueHandle;
 const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
@@ -185,6 +196,16 @@ osSemaphoreId_t adc1SemHandle;
 const osSemaphoreAttr_t adc1Sem_attributes = {
   .name = "adc1Sem"
 };
+/* Definitions for accelGyroSem */
+osSemaphoreId_t accelGyroSemHandle;
+const osSemaphoreAttr_t accelGyroSem_attributes = {
+  .name = "accelGyroSem"
+};
+/* Definitions for accelGyroPrintSem */
+osSemaphoreId_t accelGyroPrintSemHandle;
+const osSemaphoreAttr_t accelGyroPrintSem_attributes = {
+  .name = "accelGyroPrintSem"
+};
 /* USER CODE BEGIN PV */
 
 // Stream buffer for passing messages between CLI tasks
@@ -202,6 +223,7 @@ static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_ADC2_Init(void);
+static void MX_I2C1_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void cliPrintTaskFunction(void *argument);
@@ -209,6 +231,7 @@ void ledTaskFunction(void *argument);
 void printTaskFunction(void *argument);
 void buttonTaskFunction(void *argument);
 void cpuTempTaskFunction(void *argument);
+void accelGyroTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -297,6 +320,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
@@ -333,6 +357,12 @@ int main(void)
 
   /* creation of adc1Sem */
   adc1SemHandle = osSemaphoreNew(1, 1, &adc1Sem_attributes);
+
+  /* creation of accelGyroSem */
+  accelGyroSemHandle = osSemaphoreNew(1, 1, &accelGyroSem_attributes);
+
+  /* creation of accelGyroPrintSem */
+  accelGyroPrintSemHandle = osSemaphoreNew(1, 1, &accelGyroPrintSem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -380,6 +410,9 @@ int main(void)
 
   /* creation of cpuTempTask */
   cpuTempTaskHandle = osThreadNew(cpuTempTaskFunction, NULL, &cpuTempTask_attributes);
+
+  /* creation of accelGyroTask */
+  accelGyroTaskHandle = osThreadNew(accelGyroTaskFunction, NULL, &accelGyroTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -581,6 +614,40 @@ static void MX_ADC2_Init(void)
 }
 
 /**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 400000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -624,12 +691,18 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   /* DMA1_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+  /* DMA1_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream7_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream7_IRQn);
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
@@ -1304,6 +1377,24 @@ void cpuTempTaskFunction(void *argument)
     }
   }
   /* USER CODE END cpuTempTaskFunction */
+}
+
+/* USER CODE BEGIN Header_accelGyroTaskFunction */
+/**
+* @brief Function implementing the accelGyroTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_accelGyroTaskFunction */
+void accelGyroTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN accelGyroTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END accelGyroTaskFunction */
 }
 
 /**
