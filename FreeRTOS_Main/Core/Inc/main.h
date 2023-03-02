@@ -83,13 +83,44 @@ void Error_Handler(void);
 #define TCK_GPIO_Port GPIOA
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
-#define AccelGyro_SDA_Pin GPIO_PIN_7
-#define AccelGyro_SDA_GPIO_Port GPIOB
-#define AccelGyro_SCL_Pin GPIO_PIN_8
-#define AccelGyro_SCL_GPIO_Port GPIOB
+#define ACCELGYRO_SDA_Pin GPIO_PIN_7
+#define ACCELGYRO_SDA_GPIO_Port GPIOB
+#define ACCELGYRO_SCL_Pin GPIO_PIN_8
+#define ACCELGYRO_SCL_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+#define VDD (3.3)
+#define MAX_ADC_VAL_12_BITS (4095)
+#define TEMP_30 (30.0)
+#define TEMP_110_MINUS_30 (80.0)
+#define I2C_MEM_READ_CPLT (0x1)
+#define I2C_MEM_WRITE_CPLT (0x2)
+#define SWAP_UINT16(x) (((x) >> 8) | ((x) << 8))
+#define ACCELGYRO_DEVICE (0xD0)
+#define ACCELGYRO_WHO_AM_I_ADDR (0x75)
+#define ACCELGYRO_DEFAULT_ACCEL (2)
+#define ACCELGYRO_DEFAULT_GYRO (250)
+#define ACCELGYRO_PWR_MGMT_1_ADDR (0x6B)
+#define ACCELGYRO_DEVICE_RESET_SET (0x80)
+#define ACCELGYRO_DEVICE_RESET_RESET (0x80)
+#define ACCELGYRO_DEVICE_RESET_MASK (0x80)
+#define ACCELGYRO_SLEEP_SET (0x40)
+#define ACCELGYRO_SLEEP_RESET (0x00)
+#define ACCELGYRO_SLEEP_MASK (0x40)
+#define ACCELGYRO_ACCEL_ADDR (0x3B)
+// motion detection registers and bits from documentation
+#define ACCELGYRO_INT_ENABLE_ADDR (0x38)
+#define ACCELGYRO_MOTION_INT_SET (0x40)
+#define ACCELGYRO_MOTION_INT_RESET (0x00)
+#define ACCELGYRO_MOTION_INT_MASK (0x40)
+#define ACCELGYRO_MOTION_DUR_ADDR (0x20)
+#define ACCELGYRO_MOTION_DUR_5	(0x05)
+#define ACCELGYRO_MOTION_DUR_MASK (0xFF)
+#define ACCELGYRO_MOTION_THR_ADDR (0x1F)
+#define ACCELGYRO_MOTION_THR_10	(0x0A)
+#define ACCELGYRO_MOTION_THR_MASK (0xFF)
 
+// Register and bit values from manuals
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

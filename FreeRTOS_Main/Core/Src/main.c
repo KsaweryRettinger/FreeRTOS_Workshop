@@ -23,13 +23,15 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "string.h"
-#include "stdio.h"
-#include "stdlib.h"
 #include "semphr.h"
-#include "queue.h"
-#include "stdarg.h"
+#include "stdio.h"
 #include "stream_buffer.h"
 #include "FreeRTOS_CLI.h"
+#include "stdlib.h"
+#include "queue.h"
+#include "stdarg.h"
+#include "math.h"
+#include "limits.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -37,12 +39,15 @@
 
 // Enum with different data types sent via queue
 typedef enum {
-	BLINK_PERIOD
+	BLINK_PERIOD,
+	PITCH,
+	ROLL,
 } eDataType;
 
 // Union for sending different data types via queue
 typedef union {
 	uint32_t ui;
+	float f;
 } unDataValue;
 
 // Structure for sending different data types via queue
@@ -63,11 +68,6 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-#define VDD (3.3)
-#define MAX_ADC_VAL_12_BITS (4095)
-#define TEMP_30 (30.0)
-#define TEMP_110_MINUS_30 (80.0)
 
 /* USER CODE END PD */
 
@@ -1089,6 +1089,45 @@ void cliTaskFunction(void *argument)
   /* USER CODE END cliTaskFunction */
 }
 
+/* USER CODE BEGIN Header_ledTaskFunction */
+/**
+* @brief Function implementing the ledTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ledTaskFunction */
+void ledTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN ledTaskFunction */
+  /* Infinite loop */
+	BaseType_t xStatus = pdFALSE;
+	uint32_t uiBlinkPeriod = STD_DELAY;
+	TickType_t xLastWakeTime = 0;
+	Data_t receiveData = {0};
+
+	for(;;)
+  {
+		// Save wake time in ticks
+		xLastWakeTime = xTaskGetTickCount();
+
+		// Read data from queue and update blink period
+		xStatus = xQueueReceive(blinkPeriodQueueHandle, &receiveData, 0);
+		if (xStatus == pdTRUE) {
+			if (receiveData.type == BLINK_PERIOD) {
+				uiBlinkPeriod = receiveData.value.ui;
+				xQueueSend(printDataQueueHandle, &receiveData, portMAX_DELAY);
+			}
+		}
+
+		// Toggle LED
+  	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+
+  	// Delay next toggle until precise time
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
+  }
+  /* USER CODE END ledTaskFunction */
+}
+
 /* USER CODE BEGIN Header_cliPrintTaskFunction */
 /**
 * @brief Function implementing the cliPrintTask thread.
@@ -1137,45 +1176,6 @@ void cliPrintTaskFunction(void *argument)
   	}
   }
   /* USER CODE END cliPrintTaskFunction */
-}
-
-/* USER CODE BEGIN Header_ledTaskFunction */
-/**
-* @brief Function implementing the ledTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_ledTaskFunction */
-void ledTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN ledTaskFunction */
-  /* Infinite loop */
-	BaseType_t xStatus = pdFALSE;
-	uint32_t uiBlinkPeriod = STD_DELAY;
-	TickType_t xLastWakeTime = 0;
-	Data_t receiveData = {0};
-
-	for(;;)
-  {
-		// Save wake time in ticks
-		xLastWakeTime = xTaskGetTickCount();
-
-		// Read data from queue and update blink period
-		xStatus = xQueueReceive(blinkPeriodQueueHandle, &receiveData, 0);
-		if (xStatus == pdTRUE) {
-			if (receiveData.type == BLINK_PERIOD) {
-				uiBlinkPeriod = receiveData.value.ui;
-				xQueueSend(printDataQueueHandle, &receiveData, portMAX_DELAY);
-			}
-		}
-
-		// Toggle LED
-  	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-
-  	// Delay next toggle until precise time
-    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
-  }
-  /* USER CODE END ledTaskFunction */
 }
 
 /* USER CODE BEGIN Header_printTaskFunction */
@@ -1238,6 +1238,12 @@ void printTaskFunction(void *argument)
     		switch (printData.type) {
     			case BLINK_PERIOD:
     				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "printTask: Blink period %li\r\n", printData.value.ui);
+    				break;
+    			case PITCH:
+    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "printTask: Pitch: %.2f\r\n", printData.value.f);
+    				break;
+    			case ROLL:
+    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "printTask: Roll: %.2f\r\n", printData.value.f);
     				break;
     			default:
     				// Unsupported data type

@@ -269,7 +269,7 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* hi2c)
     PB7     ------> I2C1_SDA
     PB8     ------> I2C1_SCL
     */
-    GPIO_InitStruct.Pin = AccelGyro_SDA_Pin|AccelGyro_SCL_Pin;
+    GPIO_InitStruct.Pin = ACCELGYRO_SDA_Pin|ACCELGYRO_SCL_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
@@ -348,9 +348,9 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* hi2c)
     PB7     ------> I2C1_SDA
     PB8     ------> I2C1_SCL
     */
-    HAL_GPIO_DeInit(AccelGyro_SDA_GPIO_Port, AccelGyro_SDA_Pin);
+    HAL_GPIO_DeInit(ACCELGYRO_SDA_GPIO_Port, ACCELGYRO_SDA_Pin);
 
-    HAL_GPIO_DeInit(AccelGyro_SCL_GPIO_Port, AccelGyro_SCL_Pin);
+    HAL_GPIO_DeInit(ACCELGYRO_SCL_GPIO_Port, ACCELGYRO_SCL_Pin);
 
     /* I2C1 DMA DeInit */
     HAL_DMA_DeInit(hi2c->hdmarx);
