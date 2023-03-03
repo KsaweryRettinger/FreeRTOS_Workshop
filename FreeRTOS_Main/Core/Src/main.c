@@ -247,10 +247,17 @@ BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 // Utility functions for sending strings via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
 static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, QueueHandle_t printStringQueue, char *pcPrintString, ...);
+
+// Utility functions for accelerometer communication
+static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
+static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
+static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t value, uint8_t valueMask);
+static BaseType_t xAccelGyroInit(void);
 
 /* USER CODE END PFP */
 
@@ -278,6 +285,10 @@ const CLI_Command_Definition_t xTempCommand = {.pcCommand = "temp",
 																								.pcHelpString = "temp:\r\n measures CPU temperature\r\n",
 																								.pxCommandInterpreter = prvCpuTempCommand,
 																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xPitchRollCommand = {.pcCommand = "pitchroll",
+																								.pcHelpString = "pitchroll:\r\n calculates pitch and roll values\r\n",
+																								.pxCommandInterpreter = prvPitchRollCommand,
+																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
 
@@ -304,6 +315,7 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xLedCommand);
   FreeRTOS_CLIRegisterCommand(&xBlinkCommand);
   FreeRTOS_CLIRegisterCommand(&xTempCommand);
+  FreeRTOS_CLIRegisterCommand(&xPitchRollCommand);
 
   /* USER CODE END Init */
 
@@ -833,6 +845,42 @@ static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 	} while (xBytesSent != xDataLengthBytes);
 }
 
+static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size) {
+
+	BaseType_t xStatus = pdFALSE;
+	HAL_StatusTypeDef i2cStatus = HAL_OK;
+	uint32_t xNotification = 0;
+
+	// Take semaphore, which protects access to gyroscope
+	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
+
+	if (pdTRUE == xStatus) {
+
+		//Start I2C DMA transfer
+		i2cStatus = HAL_I2C_Mem_Read_DMA(&hi2c1, ACCELGYRO_DEVICE, MemAddress, MemAddSize, pData, Size);
+		if (HAL_OK != i2cStatus) {
+			xSemaphoreGive(accelGyroSemHandle);
+			return pdFAIL;
+		}
+
+		// Wait for notification from ISR
+		xStatus = xTaskNotifyWait(0, 0xffffffff, &xNotification, pdMS_TO_TICKS(SHORT_DELAY));
+		if (pdPASS == xStatus && xNotification == I2C_MEM_READ_CPLT)
+			return pdPASS;
+	}
+}
+
+static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size) {
+
+}
+static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t value, uint8_t valueMask) {
+
+}
+static BaseType_t xAccelGyroInit(void) {
+
+}
+
+
 // FreeRTOS CLI "clear" command
 BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 
@@ -945,6 +993,13 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 	vTaskResume(cpuTempTaskHandle);
 	strncpy(pcWriteBuffer, "cli: resuming cpuTempTask\r\n", xWriteBufferLen);
+	return pdFALSE;
+}
+
+// FreeRTOS CLI "temp" command
+BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+	vTaskResume(accelGyroTaskHandle);
+	strncpy(pcWriteBuffer, "cli: resuming accelGyroTask\r\n", xWriteBufferLen);
 	return pdFALSE;
 }
 
