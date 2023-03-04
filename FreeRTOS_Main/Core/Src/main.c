@@ -144,7 +144,7 @@ osThreadId_t accelGyroTaskHandle;
 const osThreadAttr_t accelGyroTask_attributes = {
   .name = "accelGyroTask",
   .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityLow,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for blinkPeriodQueue */
 osMessageQueueId_t blinkPeriodQueueHandle;
@@ -256,7 +256,7 @@ static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, Queu
 // Utility functions for accelerometer communication
 static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
 static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
-static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t value, uint8_t valueMask);
+static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t setValue, uint8_t valueMask);
 static BaseType_t xAccelGyroInit(void);
 
 /* USER CODE END PFP */
@@ -763,7 +763,7 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-// UART transmission complete ISR
+// UART data transferred ISR
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
 
 	BaseType_t xStatus = pdFALSE;
@@ -790,6 +790,52 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *husart) {
 		if (xStatus == pdTRUE) {
 			portYIELD_FROM_ISR(xYieldRequired);
 		}
+	}
+}
+
+// I2C data received ISR
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
+
+	BaseType_t xStatus = pdFALSE;
+	BaseType_t xYieldRequired = pdFALSE;
+	BaseType_t xYieldRequiredSem = pdFALSE;
+
+	if (hi2c->Instance == I2C1) {
+
+		// Notify accelerometer task and give semaphore
+		xTaskNotifyFromISR(accelGyroTaskHandle, I2C_MEM_READ_CPLT, eSetBits, &xYieldRequired);
+		xStatus = xSemaphoreGiveFromISR(accelGyroSemHandle, &xYieldRequiredSem);
+
+		// Check if any of the calls caused a higher priority task to wake up
+		if (xStatus == pdTRUE) {
+			xYieldRequired |= xYieldRequiredSem;
+		}
+
+		// Yield if required
+		portYIELD_FROM_ISR(xYieldRequired);
+	}
+}
+
+// I2C data transferred ISR
+void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
+
+	BaseType_t xStatus = pdFALSE;
+	BaseType_t xYieldRequired = pdFALSE;
+	BaseType_t xYieldRequiredSem = pdFALSE;
+
+	if (hi2c->Instance == I2C1) {
+
+		// Notify accelerometer task and give semaphore
+		xTaskNotifyFromISR(accelGyroTaskHandle, I2C_MEM_WRITE_CPLT, eSetBits, &xYieldRequired);
+		xStatus = xSemaphoreGiveFromISR(accelGyroSemHandle, &xYieldRequiredSem);
+
+		// Check if any of the calls caused a higher priority task to wake up
+		if (xStatus == pdTRUE) {
+			xYieldRequired |= xYieldRequiredSem;
+		}
+
+		// Yield if required
+		portYIELD_FROM_ISR(xYieldRequired);
 	}
 }
 
@@ -868,18 +914,77 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 		if (pdPASS == xStatus && xNotification == I2C_MEM_READ_CPLT)
 			return pdPASS;
 	}
+
+	return pdFAIL;
 }
 
 static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size) {
 
-}
-static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t value, uint8_t valueMask) {
+	BaseType_t xStatus = pdFALSE;
+	HAL_StatusTypeDef i2cStatus = HAL_OK;
+	uint32_t xNotification = 0;
 
+	// Take semaphore, which protects access to gyroscope
+	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
+
+	if (pdTRUE == xStatus) {
+
+		//Start I2C DMA transfer
+		i2cStatus = HAL_I2C_Mem_Write_DMA(&hi2c1, ACCELGYRO_DEVICE, MemAddress, MemAddSize, pData, Size);
+		if (HAL_OK != i2cStatus) {
+			xSemaphoreGive(accelGyroSemHandle);
+			return pdFAIL;
+		}
+
+		// Wait for notification from ISR
+		xStatus = xTaskNotifyWait(0, 0xffffffff, &xNotification, pdMS_TO_TICKS(SHORT_DELAY));
+		if (pdPASS == xStatus && xNotification == I2C_MEM_WRITE_CPLT)
+			return pdPASS;
+	}
+
+	return pdFAIL;
 }
+
+static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t setValue, uint8_t valueMask) {
+
+	static uint8_t value = 0;
+	BaseType_t xStatus = pdPASS;
+
+	// Read single byte from register
+	xStatus = xAccelGyroMemRead(MemAddress, 1, &value, 1);
+
+	if (pdPASS == xStatus) {
+
+		// Clear masked bits and set using new value
+		value &= ~valueMask;
+		value |= (setValue & valueMask);
+
+		// Write value to register
+		xStatus = xAccelGyroMemWrite(MemAddress, 1, &value, 1);
+	}
+
+	return xStatus;
+}
+
 static BaseType_t xAccelGyroInit(void) {
 
-}
+	BaseType_t xStatus = pdPASS;
 
+	// Reset accelerometer
+	xStatus = xAccelGyroSetValue(ACCELGYRO_PWR_MGMT_1_ADDR, ACCELGYRO_DEVICE_RESET_SET, ACCELGYRO_DEVICE_RESET_MASK);
+
+	// Wait after reset
+	if (pdPASS == xStatus) {
+		vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
+	}
+
+	// Disable energy saving mode
+	if (pdPASS == xStatus) {
+		xStatus = xAccelGyroSetValue(ACCELGYRO_PWR_MGMT_1_ADDR, ACCELGYRO_SLEEP_RESET, ACCELGYRO_SLEEP_MASK);
+	}
+
+	return xStatus;
+}
 
 // FreeRTOS CLI "clear" command
 BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
@@ -1144,45 +1249,6 @@ void cliTaskFunction(void *argument)
   /* USER CODE END cliTaskFunction */
 }
 
-/* USER CODE BEGIN Header_ledTaskFunction */
-/**
-* @brief Function implementing the ledTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_ledTaskFunction */
-void ledTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN ledTaskFunction */
-  /* Infinite loop */
-	BaseType_t xStatus = pdFALSE;
-	uint32_t uiBlinkPeriod = STD_DELAY;
-	TickType_t xLastWakeTime = 0;
-	Data_t receiveData = {0};
-
-	for(;;)
-  {
-		// Save wake time in ticks
-		xLastWakeTime = xTaskGetTickCount();
-
-		// Read data from queue and update blink period
-		xStatus = xQueueReceive(blinkPeriodQueueHandle, &receiveData, 0);
-		if (xStatus == pdTRUE) {
-			if (receiveData.type == BLINK_PERIOD) {
-				uiBlinkPeriod = receiveData.value.ui;
-				xQueueSend(printDataQueueHandle, &receiveData, portMAX_DELAY);
-			}
-		}
-
-		// Toggle LED
-  	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-
-  	// Delay next toggle until precise time
-    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
-  }
-  /* USER CODE END ledTaskFunction */
-}
-
 /* USER CODE BEGIN Header_cliPrintTaskFunction */
 /**
 * @brief Function implementing the cliPrintTask thread.
@@ -1231,6 +1297,45 @@ void cliPrintTaskFunction(void *argument)
   	}
   }
   /* USER CODE END cliPrintTaskFunction */
+}
+
+/* USER CODE BEGIN Header_ledTaskFunction */
+/**
+* @brief Function implementing the ledTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ledTaskFunction */
+void ledTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN ledTaskFunction */
+  /* Infinite loop */
+	BaseType_t xStatus = pdFALSE;
+	uint32_t uiBlinkPeriod = STD_DELAY;
+	TickType_t xLastWakeTime = 0;
+	Data_t receiveData = {0};
+
+	for(;;)
+  {
+		// Save wake time in ticks
+		xLastWakeTime = xTaskGetTickCount();
+
+		// Read data from queue and update blink period
+		xStatus = xQueueReceive(blinkPeriodQueueHandle, &receiveData, 0);
+		if (xStatus == pdTRUE) {
+			if (receiveData.type == BLINK_PERIOD) {
+				uiBlinkPeriod = receiveData.value.ui;
+				xQueueSend(printDataQueueHandle, &receiveData, portMAX_DELAY);
+			}
+		}
+
+		// Toggle LED
+  	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+
+  	// Delay next toggle until precise time
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
+  }
+  /* USER CODE END ledTaskFunction */
 }
 
 /* USER CODE BEGIN Header_printTaskFunction */
@@ -1450,10 +1555,66 @@ void cpuTempTaskFunction(void *argument)
 void accelGyroTaskFunction(void *argument)
 {
   /* USER CODE BEGIN accelGyroTaskFunction */
-  /* Infinite loop */
+
+  BaseType_t xStatus = pdFALSE;
+  StringData_t printString = {0};
+  Data_t printValue = {0};
+  char cText[OUTPUT_BUFFER_LEN] = {0};
+
+  // Accelerometer readings
+	uint16_t sAccel[3] = {0};
+	int16_t sAxisXRaw = 0;
+	int16_t sAxisYRaw = 0;
+	int16_t sAxisZRaw = 0;
+	float fAxisX = 0.0;
+	float fAxisY = 0.0;
+	float fAxisZ = 0.0;
+	float fPitch = 0.0;
+	float fRoll = 0.0;
+
+	// Initialize struct used for printing data
+	vInitPrintStringData(&printString, cText, sizeof(cText), accelGyroPrintSemHandle);
+
+	// Reset accelerometer
+	xStatus = xAccelGyroInit();
+	if (pdFAIL == xStatus) {
+		xSendStringByQueue(&printString, printStringQueueHandle, "accelGyroTask: accelGyro init failed\r\n");
+	}
+
+	/* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+  	vTaskSuspend(NULL);
+
+  	// Read X, Y and Z axis accelerometer values (2x 1-byte register per axis, 6 bytes total)
+  	xAccelGyroMemRead(ACCELGYRO_ACCEL_ADDR, 1, (uint8_t *)&sAccel[0], sizeof(sAccel));
+
+  	// Swap big endian for little endian in each register
+  	sAxisXRaw = SWAP_UINT16(sAccel[0]);
+  	sAxisYRaw = SWAP_UINT16(sAccel[1]);
+  	sAxisZRaw = SWAP_UINT16(sAccel[2]);
+
+  	// Calculate X, Y and Z accleration values
+  	fAxisX = (float) (sAxisXRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
+  	fAxisY = (float) (sAxisYRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
+  	fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
+
+  	// Print acceleration values for each axis
+  	xSendStringByQueue(&printString, printStringQueueHandle, "accelGyroTask: Acceleration values, X: %.2f, Y: %.2f, Z: %.2f\r\n", fAxisX, fAxisY, fAxisZ);
+
+  	// Calculate pitch and roll
+  	fPitch = atan2(fAxisY, fAxisZ) * 57.3;
+  	fRoll = atan2((-fAxisX), sqrt(fAxisY * fAxisY + fAxisZ * fAxisZ)) * 57.3;
+
+  	// Send pitch value to printing task
+  	printValue.type = PITCH;
+  	printValue.value.f = fPitch;
+  	xQueueSend(printDataQueueHandle, &printValue, pdMS_TO_TICKS(SHORT_DELAY));
+
+  	// Send roll value to printing task
+  	printValue.type = ROLL;
+  	printValue.value.f = fRoll;
+  	xQueueSend(printDataQueueHandle, &printValue, pdMS_TO_TICKS(SHORT_DELAY));
   }
   /* USER CODE END accelGyroTaskFunction */
 }
