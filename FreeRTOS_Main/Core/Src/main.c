@@ -1016,7 +1016,7 @@ BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 		lCounter = atoi(pcParameter2);
 		if (lCounter < 1) {
 			lCounter = 0;
-			strcpy(pcWriteBuffer, "cli: invalid command, value must be > 0\r\n");
+			strcpy(pcWriteBuffer, "[cli] Invalid command, value must be > 0\r\n");
 			return pdFALSE;
 		}
 	}
@@ -1047,18 +1047,18 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	// Interpret command
 	if (strncmp(pcParameter1, "on", xParameter1StringLength) == 0)
 	{
-		strcpy(pcWriteBuffer, "cli: resuming LED task\r\n");
+		strcpy(pcWriteBuffer, "[cli] Resuming LED task\r\n");
 		vTaskResume(ledTaskHandle);
 
 	}
 	else if (strncmp(pcParameter1, "off", xParameter1StringLength) == 0)
 	{
-		strcpy(pcWriteBuffer, "cli: suspending LED task\r\n");
+		strcpy(pcWriteBuffer, "[cli] Suspending LED task\r\n");
 		vTaskSuspend(ledTaskHandle);
 	}
 	else
 	{
-		strcpy(pcWriteBuffer, "cli: invalid command\r\nsyntax: led [on|off]\r\n");
+		strcpy(pcWriteBuffer, "[cli] Invalid command\r\nsyntax: led [on|off]\r\n");
 	}
 
 	return pdFALSE;
@@ -1083,12 +1083,12 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 
 	// Abort LED task delay
 	xTaskAbortDelay(ledTaskHandle);
-	snprintf(pcWriteBuffer, xWriteBufferLen, "cli: setting blinking period to %lu ms\r\n", blinkPeriodData.value.ui);
+	snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting blinking period to %lu ms\r\n", blinkPeriodData.value.ui);
 
 	// Resume LED task if it was suspended
 	if (eTaskGetState(ledTaskHandle) == eSuspended) {
 		vTaskResume(ledTaskHandle);
-		strncat(pcWriteBuffer, "cli: resuming led blink task\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+		strncat(pcWriteBuffer, "[cli] Resuming led blink task\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
 	}
 
 	return pdFALSE;
@@ -1097,14 +1097,14 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 // FreeRTOS CLI "temp" command
 BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 	vTaskResume(cpuTempTaskHandle);
-	strncpy(pcWriteBuffer, "cli: resuming cpuTempTask\r\n", xWriteBufferLen);
+	strncpy(pcWriteBuffer, "[cli] Resuming cpuTempTask\r\n", xWriteBufferLen);
 	return pdFALSE;
 }
 
 // FreeRTOS CLI "temp" command
 BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 	vTaskResume(accelGyroTaskHandle);
-	strncpy(pcWriteBuffer, "cli: resuming accelGyroTask\r\n", xWriteBufferLen);
+	strncpy(pcWriteBuffer, "[cli] Resuming accelGyroTask\r\n", xWriteBufferLen);
 	return pdFALSE;
 }
 
@@ -1397,13 +1397,13 @@ void printTaskFunction(void *argument)
     	if (xStatus == pdTRUE) {
     		switch (printData.type) {
     			case BLINK_PERIOD:
-    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "printTask: Blink period %li\r\n", printData.value.ui);
+    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "[printTask] Blink period %li\r\n", printData.value.ui);
     				break;
     			case PITCH:
-    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "printTask: Pitch: %.2f\r\n", printData.value.f);
+    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "[printTask] Pitch: %.2f\r\n", printData.value.f);
     				break;
     			case ROLL:
-    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "printTask: Roll: %.2f\r\n", printData.value.f);
+    				xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "[printTask] Roll: %.2f\r\n", printData.value.f);
     				break;
     			default:
     				// Unsupported data type
@@ -1538,7 +1538,7 @@ void cpuTempTaskFunction(void *argument)
 				fVdda = (VDD * (*psVddRefCalVal)) / *psVRefRead;
 				fVTempSens = (*psTempSenRead * fVdda) / MAX_ADC_VAL_12_BITS;
 				fCpuTemp = ((fVAtTemp30 - fVTempSens) / fVTempSenSlope) + TEMP_30;
-				xSendStringByQueue(&printString, printStringQueueHandle, "cpuTempTask: CPU temp %.2fC\r\n", fCpuTemp);
+				xSendStringByQueue(&printString, printStringQueueHandle, "[cpuTempTask] CPU temperature: %.2fC\r\n", fCpuTemp);
     	}
     }
   }
@@ -1578,7 +1578,7 @@ void accelGyroTaskFunction(void *argument)
 	// Reset accelerometer
 	xStatus = xAccelGyroInit();
 	if (pdFAIL == xStatus) {
-		xSendStringByQueue(&printString, printStringQueueHandle, "accelGyroTask: accelGyro init failed\r\n");
+		xSendStringByQueue(&printString, printStringQueueHandle, "[accelGyroTask] accelGyro init failed\r\n");
 	}
 
 	/* Infinite loop */
@@ -1600,7 +1600,7 @@ void accelGyroTaskFunction(void *argument)
   	fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
 
   	// Print acceleration values for each axis
-  	xSendStringByQueue(&printString, printStringQueueHandle, "accelGyroTask: Acceleration values, X: %.2f, Y: %.2f, Z: %.2f\r\n", fAxisX, fAxisY, fAxisZ);
+  	xSendStringByQueue(&printString, printStringQueueHandle, "[accelGyroTask] Acceleration values: X = %.2f, Y = %.2f, Z = %.2f\r\n", fAxisX, fAxisY, fAxisZ);
 
   	// Calculate pitch and roll
   	fPitch = atan2(fAxisY, fAxisZ) * 57.3;
