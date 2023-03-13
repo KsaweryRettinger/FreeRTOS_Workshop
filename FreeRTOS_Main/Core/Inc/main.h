@@ -111,6 +111,7 @@ void Error_Handler(void);
 #define ACCELGYRO_SLEEP_RESET (0x00)
 #define ACCELGYRO_SLEEP_MASK (0x40)
 #define ACCELGYRO_ACCEL_ADDR (0x3B)
+#define ACCELGYRO_GYRO_ADDR (0x43)
 // motion detection registers and bits from documentation
 #define ACCELGYRO_INT_ENABLE_ADDR (0x38)
 #define ACCELGYRO_MOTION_INT_SET (0x40)

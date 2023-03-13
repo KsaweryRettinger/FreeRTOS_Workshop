@@ -226,6 +226,16 @@ StreamBufferHandle_t xStreamBufferCli = NULL;
 // Array for storing jostick ADC readings
 uint16_t sAdc2Read[2] = {0};
 
+// Global variables for accelerometer/gyroscope readings
+float gfAccelX = 0.0;
+float gfAccelY = 0.0;
+float gfAccelZ = 0.0;
+float gfGyroX = 0.0;
+float gfGyroY = 0.0;
+float gfGyroZ = 0.0;
+float gfPitch = 0.0;
+float gfRoll = 0.0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -1144,8 +1154,19 @@ BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const 
 
 // FreeRTOS CLI "temp" command
 BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
-	vTaskResume(accelGyroTaskHandle);
-	strncpy(pcWriteBuffer, "[cli] Resuming accelGyroTask\r\n", xWriteBufferLen);
+
+	Data_t printValue = {0};
+
+	// Print pitch value
+	printValue.type = PITCH;
+	printValue.value.f = gfPitch;
+	xQueueSend(printDataQueueHandle, &printValue, 0);
+
+	// Print roll value
+	printValue.type = ROLL;
+	printValue.value.f = gfRoll;
+	xQueueSend(printDataQueueHandle, &printValue, 0);
+
 	return pdFALSE;
 }
 
@@ -1598,12 +1619,12 @@ void accelGyroTaskFunction(void *argument)
   /* USER CODE BEGIN accelGyroTaskFunction */
 
   BaseType_t xStatus = pdFALSE;
-  StringData_t printString = {0};
-  Data_t printValue = {0};
   char cText[OUTPUT_BUFFER_LEN] = {0};
+  StringData_t printString = {0};
 
   // Accelerometer readings
 	uint16_t sAccel[3] = {0};
+	uint16_t sGyro[3] = {0};
 	int16_t sAxisXRaw = 0;
 	int16_t sAxisYRaw = 0;
 	int16_t sAxisZRaw = 0;
@@ -1616,7 +1637,7 @@ void accelGyroTaskFunction(void *argument)
 	// Initialize struct used for printing data
 	vInitPrintStringData(&printString, cText, sizeof(cText), accelGyroPrintSemHandle);
 
-	// Reset accelerometer
+	// Initialize accelerometer
 	xStatus = xAccelGyroInit();
 	if (pdFAIL == xStatus) {
 		xSendStringByQueue(&printString, printStringQueueHandle, "[accelGyroTask] accelGyro init failed\r\n");
@@ -1625,8 +1646,6 @@ void accelGyroTaskFunction(void *argument)
 	/* Infinite loop */
   for(;;)
   {
-  	vTaskSuspend(NULL);
-
   	// Read X, Y and Z axis accelerometer values (2x 1-byte register per axis, 6 bytes total)
   	xAccelGyroMemRead(ACCELGYRO_ACCEL_ADDR, 1, (uint8_t *)&sAccel[0], sizeof(sAccel));
 
@@ -1635,27 +1654,31 @@ void accelGyroTaskFunction(void *argument)
   	sAxisYRaw = SWAP_UINT16(sAccel[1]);
   	sAxisZRaw = SWAP_UINT16(sAccel[2]);
 
-  	// Calculate X, Y and Z accleration values
-  	fAxisX = (float) (sAxisXRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
-  	fAxisY = (float) (sAxisYRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
-  	fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
-
-  	// Print acceleration values for each axis
-  	xSendStringByQueue(&printString, printStringQueueHandle, "[accelGyroTask] Acceleration values: X = %.2f, Y = %.2f, Z = %.2f\r\n", fAxisX, fAxisY, fAxisZ);
+  	// Convert to acceleration readings
+  	gfAccelX = fAxisX = (float) (sAxisXRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
+  	gfAccelY = fAxisY = (float) (sAxisYRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
+  	gfAccelZ = fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
 
   	// Calculate pitch and roll
-  	fPitch = atan2(fAxisY, fAxisZ) * 57.3;
-  	fRoll = atan2((-fAxisX), sqrt(fAxisY * fAxisY + fAxisZ * fAxisZ)) * 57.3;
+  	gfPitch = fPitch = atan2(fAxisY, fAxisZ) * 57.3;
+  	gfRoll = fRoll = atan2((-fAxisX), sqrt(fAxisY * fAxisY + fAxisZ * fAxisZ)) * 57.3;
 
-  	// Send pitch value to printing task
-  	printValue.type = PITCH;
-  	printValue.value.f = fPitch;
-  	xQueueSend(printDataQueueHandle, &printValue, pdMS_TO_TICKS(SHORT_DELAY));
+  	// Read X, Y and Z axis gyroscope values (2x 1-byte register per axis, 6 bytes total)
+  	xAccelGyroMemRead(ACCELGYRO_GYRO_ADDR, 1, (uint8_t *)&sGyro[0], sizeof(sGyro));
 
-  	// Send roll value to printing task
-  	printValue.type = ROLL;
-  	printValue.value.f = fRoll;
-  	xQueueSend(printDataQueueHandle, &printValue, pdMS_TO_TICKS(SHORT_DELAY));
+  	// Swap big endian for little endian in each register
+  	sAxisXRaw = SWAP_UINT16(sGyro[0]);
+  	sAxisYRaw = SWAP_UINT16(sGyro[1]);
+  	sAxisZRaw = SWAP_UINT16(sGyro[2]);
+
+  	// Convert to gyroscope readings
+  	gfGyroX = fAxisX = (float) (sAxisXRaw * ACCELGYRO_DEFAULT_GYRO) / SHRT_MAX;
+  	gfGyroY = fAxisY = (float) (sAxisYRaw * ACCELGYRO_DEFAULT_GYRO) / SHRT_MAX;
+  	gfGyroZ = fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_GYRO) / SHRT_MAX;
+
+  	// Sample every 50ms
+  	vTaskDelay(pdMS_TO_TICKS(50));
+
   }
   /* USER CODE END accelGyroTaskFunction */
 }
