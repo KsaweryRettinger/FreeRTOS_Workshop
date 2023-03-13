@@ -146,6 +146,13 @@ const osThreadAttr_t accelGyroTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for eventTask */
+osThreadId_t eventTaskHandle;
+const osThreadAttr_t eventTask_attributes = {
+  .name = "eventTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for blinkPeriodQueue */
 osMessageQueueId_t blinkPeriodQueueHandle;
 const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
@@ -206,6 +213,11 @@ osSemaphoreId_t accelGyroPrintSemHandle;
 const osSemaphoreAttr_t accelGyroPrintSem_attributes = {
   .name = "accelGyroPrintSem"
 };
+/* Definitions for eventPrintSem */
+osSemaphoreId_t eventPrintSemHandle;
+const osSemaphoreAttr_t eventPrintSem_attributes = {
+  .name = "eventPrintSem"
+};
 /* USER CODE BEGIN PV */
 
 // Stream buffer for passing messages between CLI tasks
@@ -232,6 +244,7 @@ void printTaskFunction(void *argument);
 void buttonTaskFunction(void *argument);
 void cpuTempTaskFunction(void *argument);
 void accelGyroTaskFunction(void *argument);
+void eventTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -376,6 +389,9 @@ int main(void)
   /* creation of accelGyroPrintSem */
   accelGyroPrintSemHandle = osSemaphoreNew(1, 1, &accelGyroPrintSem_attributes);
 
+  /* creation of eventPrintSem */
+  eventPrintSemHandle = osSemaphoreNew(1, 1, &eventPrintSem_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -425,6 +441,9 @@ int main(void)
 
   /* creation of accelGyroTask */
   accelGyroTaskHandle = osThreadNew(accelGyroTaskFunction, NULL, &accelGyroTask_attributes);
+
+  /* creation of eventTask */
+  eventTaskHandle = osThreadNew(eventTaskFunction, NULL, &eventTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -755,7 +774,16 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : MOTION_INT_Pin */
+  GPIO_InitStruct.Pin = MOTION_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(MOTION_INT_GPIO_Port, &GPIO_InitStruct);
+
   /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
@@ -842,15 +870,18 @@ void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
 // Blue button pushed ISR
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
-	BaseType_t xStatus = pdFALSE;
-	BaseType_t xYieldRequired = pdFALSE;
+	BaseType_t xStatus = pdTRUE;
+	BaseType_t xYieldRequired = 0;
 
 	//Check UART and give semaphore
 	if (GPIO_Pin == B1_Pin) {
 		xStatus = xSemaphoreGiveFromISR(buttonSemHandle, &xYieldRequired);
-		if (xStatus == pdTRUE) {
-			portYIELD_FROM_ISR(xYieldRequired);
-		}
+	} else if (GPIO_Pin == MOTION_INT_Pin) {
+		vTaskNotifyGiveFromISR(eventTaskHandle, &xYieldRequired);
+	}
+
+	if (pdTRUE == xStatus) {
+		portYIELD_FROM_ISR(xYieldRequired);
 	}
 }
 
@@ -897,7 +928,7 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 	HAL_StatusTypeDef i2cStatus = HAL_OK;
 	uint32_t xNotification = 0;
 
-	// Take semaphore, which protects access to gyroscope
+	// Take semaphore, which protects access to accelerometer
 	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
 
 	if (pdTRUE == xStatus) {
@@ -974,14 +1005,24 @@ static BaseType_t xAccelGyroInit(void) {
 	xStatus = xAccelGyroSetValue(ACCELGYRO_PWR_MGMT_1_ADDR, ACCELGYRO_DEVICE_RESET_SET, ACCELGYRO_DEVICE_RESET_MASK);
 
 	// Wait after reset
-	if (pdPASS == xStatus) {
+	if (pdPASS == xStatus)
 		vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
-	}
 
 	// Disable energy saving mode
-	if (pdPASS == xStatus) {
+	if (pdPASS == xStatus)
 		xStatus = xAccelGyroSetValue(ACCELGYRO_PWR_MGMT_1_ADDR, ACCELGYRO_SLEEP_RESET, ACCELGYRO_SLEEP_MASK);
-	}
+
+	// Enable motion interrupt
+	if (pdPASS == xStatus)
+		xStatus = xAccelGyroSetValue(ACCELGYRO_INT_ENABLE_ADDR, ACCELGYRO_MOTION_INT_SET, ACCELGYRO_MOTION_INT_MASK);
+
+	// Set counter threshold
+	if (pdPASS == xStatus)
+		xStatus = xAccelGyroSetValue(ACCELGYRO_MOTION_DUR_ADDR, ACCELGYRO_MOTION_DUR_5, ACCELGYRO_MOTION_DUR_MASK);
+
+	// Set acceleration threshold
+	if (pdPASS == xStatus)
+		xStatus = xAccelGyroSetValue(ACCELGYRO_MOTION_THR_ADDR, ACCELGYRO_MOTION_THR_10, ACCELGYRO_MOTION_THR_MASK);
 
 	return xStatus;
 }
@@ -1617,6 +1658,33 @@ void accelGyroTaskFunction(void *argument)
   	xQueueSend(printDataQueueHandle, &printValue, pdMS_TO_TICKS(SHORT_DELAY));
   }
   /* USER CODE END accelGyroTaskFunction */
+}
+
+/* USER CODE BEGIN Header_eventTaskFunction */
+/**
+* @brief Function implementing the eventTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_eventTaskFunction */
+void eventTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN eventTaskFunction */
+
+	uint32_t xNotification = 0;
+	char cText[OUTPUT_BUFFER_LEN] = {0};
+	StringData_t printString = {0};
+
+	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
+
+  for(;;)
+  {
+    xNotification = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (xNotification != 0) {
+    	xSendStringByQueue(&printString, printStringQueueHandle, "eventTask: Motion interrupt!\r\n");
+    }
+  }
+  /* USER CODE END eventTaskFunction */
 }
 
 /**
