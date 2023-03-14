@@ -50,18 +50,18 @@ typedef union {
 	float f;
 } unDataValue;
 
-// Structure for sending different data types via queue
+// Structure that encapsulates data sent via queue
 typedef struct {
-	eDataType type;
-	unDataValue value;
+	eDataType type;				// enum
+	unDataValue value;		// union
 } Data_t;
 
-// Structure for sending strings via queue
+// Structure that encapsulates strings sent via queue
 typedef struct {
-	char *pcString;
-	size_t xStringSize;
-	size_t xStringMaxSize;
-	SemaphoreHandle_t pStringLock;
+	char *pcString;									// pointer to string buffer
+	size_t xStringSize;							// actual size of string
+	size_t xStringMaxSize; 					// size of string buffer
+	SemaphoreHandle_t pStringLock;	// semaphore used to guard access to string
 } StringData_t;
 
 /* USER CODE END PTD */
@@ -77,15 +77,19 @@ typedef struct {
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+
+// ADC handles
 ADC_HandleTypeDef hadc1;
 ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
 DMA_HandleTypeDef hdma_adc2;
 
+// I2C handles
 I2C_HandleTypeDef hi2c1;
 DMA_HandleTypeDef hdma_i2c1_rx;
 DMA_HandleTypeDef hdma_i2c1_tx;
 
+// UART handles
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
@@ -264,7 +268,7 @@ static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 																						 size_t xDataLengthBytes,
 																						 TickType_t xTicksToWait);
 
-// FreeRTOS CLI callback function prototypes
+// FreeRTOS CLI callback functions
 BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
@@ -276,7 +280,7 @@ BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, cons
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
 static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, QueueHandle_t printStringQueue, char *pcPrintString, ...);
 
-// Utility functions for accelerometer communication
+// Utility functions for MPU6050 accelerometer communication
 static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
 static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
 static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t setValue, uint8_t valueMask);
@@ -305,11 +309,11 @@ const CLI_Command_Definition_t xBlinkCommand = {.pcCommand = "blink",
 																								.pxCommandInterpreter = prvBlinkCommand,
 																								.cExpectedNumberOfParameters = 1 };
 const CLI_Command_Definition_t xTempCommand = {.pcCommand = "temp",
-																								.pcHelpString = "temp:\r\n measures CPU temperature\r\n",
+																								.pcHelpString = "temp:\r\n Measures CPU temperature\r\n",
 																								.pxCommandInterpreter = prvCpuTempCommand,
 																								.cExpectedNumberOfParameters = 0 };
 const CLI_Command_Definition_t xPitchRollCommand = {.pcCommand = "pitchroll",
-																								.pcHelpString = "pitchroll:\r\n calculates pitch and roll values\r\n",
+																								.pcHelpString = "pitchroll:\r\n Prints latest pitch and roll values\r\n",
 																								.pxCommandInterpreter = prvPitchRollCommand,
 																								.cExpectedNumberOfParameters = 0 };
 
@@ -356,6 +360,7 @@ int main(void)
   MX_ADC1_Init();
   MX_ADC2_Init();
   MX_I2C1_Init();
+
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
@@ -938,7 +943,7 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 	HAL_StatusTypeDef i2cStatus = HAL_OK;
 	uint32_t xNotification = 0;
 
-	// Take semaphore, which protects access to accelerometer
+	// Take semaphore, which protects access to gyroscope (I2C1)
 	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
 
 	if (pdTRUE == xStatus) {
@@ -965,7 +970,7 @@ static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, u
 	HAL_StatusTypeDef i2cStatus = HAL_OK;
 	uint32_t xNotification = 0;
 
-	// Take semaphore, which protects access to gyroscope
+	// Take semaphore, which protects access to gyroscope (I2C1)
 	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
 
 	if (pdTRUE == xStatus) {
@@ -1100,7 +1105,6 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	{
 		strcpy(pcWriteBuffer, "[cli] Resuming LED task\r\n");
 		vTaskResume(ledTaskHandle);
-
 	}
 	else if (strncmp(pcParameter1, "off", xParameter1StringLength) == 0)
 	{
@@ -1250,7 +1254,7 @@ void cliTaskFunction(void *argument)
 
 	for(;;)
   {
-		// Take Rx semaphore
+		// Wait for new character and take Rx semaphore
 		xStatus = xSemaphoreTake(uart2RxSemHandle, pdMS_TO_TICKS(STD_DELAY));
 		if (xStatus == pdTRUE)
 		{
@@ -1289,20 +1293,20 @@ void cliTaskFunction(void *argument)
 			}
 			else if ((cTxChar == DEL_CHAR) && (cInputBufferIndex > 0))
 			{
-				// 'Delete' character received, remove entry from input buffer
+				// 'Delete' character received, remove from input buffer
 				cInputBuffer[--cInputBufferIndex] = '\0';
 				vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
 			}
 			else if (cInputBufferIndex < INPUT_BUFFER_LEN)
 			{
-				// Other character received
+				// Save new character and echo to terminal
 				cInputBuffer[cInputBufferIndex++] = cTxChar;
 				vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
 			}
 		}
 		else
 		{
-			// Check USART state and call generic error handler in case of errors
+			// Monitor USART state and call generic error handler in case of issues
 			uartState = HAL_UART_GetState(&huart2);
 			if (HAL_UART_STATE_ERROR == uartState)
 				Error_Handler();
@@ -1336,7 +1340,7 @@ void cliPrintTaskFunction(void *argument)
 
   	if (xReceiveSize > 0) {
 
-    	// Wait for previous transmission to complete
+    	// Wait for previous transmission to complete and take Tx semaphore
     	xStatus = xSemaphoreTake(uart2TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
 
     	// Transmit bytes read from the stream buffer
@@ -1376,6 +1380,8 @@ void ledTaskFunction(void *argument)
 	uint32_t uiBlinkPeriod = STD_DELAY;
 	TickType_t xLastWakeTime = 0;
 	Data_t receiveData = {0};
+
+	vTaskSuspend(NULL);
 
 	for(;;)
   {
