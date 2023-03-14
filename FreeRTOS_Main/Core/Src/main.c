@@ -218,6 +218,11 @@ osSemaphoreId_t eventPrintSemHandle;
 const osSemaphoreAttr_t eventPrintSem_attributes = {
   .name = "eventPrintSem"
 };
+/* Definitions for i2cEvent */
+osEventFlagsId_t i2cEventHandle;
+const osEventFlagsAttr_t i2cEvent_attributes = {
+  .name = "i2cEvent"
+};
 /* USER CODE BEGIN PV */
 
 // Stream buffer for passing messages between CLI tasks
@@ -458,6 +463,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
+
+  /* Create the event(s) */
+  /* creation of i2cEvent */
+  i2cEventHandle = osEventFlagsNew(&i2cEvent_attributes);
 
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
