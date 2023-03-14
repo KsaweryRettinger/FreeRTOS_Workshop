@@ -32,6 +32,7 @@
 #include "stdarg.h"
 #include "math.h"
 #include "limits.h"
+#include "event_groups.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -849,11 +850,12 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
 	BaseType_t xStatus = pdFALSE;
 	BaseType_t xYieldRequired = pdFALSE;
 	BaseType_t xYieldRequiredSem = pdFALSE;
+	EventBits_t xBitsToSet = I2C_MEM_READ_CPLT;
 
 	if (hi2c->Instance == I2C1) {
 
 		// Notify accelerometer task and give semaphore
-		xTaskNotifyFromISR(accelGyroTaskHandle, I2C_MEM_READ_CPLT, eSetBits, &xYieldRequired);
+		xEventGroupSetBitsFromISR(i2cEventHandle, xBitsToSet, &xYieldRequired);
 		xStatus = xSemaphoreGiveFromISR(accelGyroSemHandle, &xYieldRequiredSem);
 
 		// Check if any of the calls caused a higher priority task to wake up
@@ -872,11 +874,12 @@ void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
 	BaseType_t xStatus = pdFALSE;
 	BaseType_t xYieldRequired = pdFALSE;
 	BaseType_t xYieldRequiredSem = pdFALSE;
+	EventBits_t xBitsToSet = I2C_MEM_WRITE_CPLT;
 
 	if (hi2c->Instance == I2C1) {
 
 		// Notify accelerometer task and give semaphore
-		xTaskNotifyFromISR(accelGyroTaskHandle, I2C_MEM_WRITE_CPLT, eSetBits, &xYieldRequired);
+		xEventGroupSetBitsFromISR(i2cEventHandle, xBitsToSet, &xYieldRequired);
 		xStatus = xSemaphoreGiveFromISR(accelGyroSemHandle, &xYieldRequiredSem);
 
 		// Check if any of the calls caused a higher priority task to wake up
@@ -948,7 +951,8 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 
 	BaseType_t xStatus = pdFALSE;
 	HAL_StatusTypeDef i2cStatus = HAL_OK;
-	uint32_t xNotification = 0;
+	EventBits_t xEventGroupValue = 0;
+	EventBits_t xBitsToWaitFor = I2C_MEM_READ_CPLT;
 
 	// Take semaphore, which protects access to gyroscope (I2C1)
 	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
@@ -962,9 +966,9 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 			return pdFAIL;
 		}
 
-		// Wait for notification from ISR
-		xStatus = xTaskNotifyWait(0, 0xffffffff, &xNotification, pdMS_TO_TICKS(SHORT_DELAY));
-		if (pdPASS == xStatus && xNotification == I2C_MEM_READ_CPLT)
+		// Wait for I2C event bit to be set
+		xEventGroupValue = xEventGroupWaitBits(i2cEventHandle, xBitsToWaitFor, pdTRUE, pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
+		if (pdPASS == xStatus && (xEventGroupValue & xBitsToWaitFor))
 			return pdPASS;
 	}
 
@@ -975,7 +979,8 @@ static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, u
 
 	BaseType_t xStatus = pdFALSE;
 	HAL_StatusTypeDef i2cStatus = HAL_OK;
-	uint32_t xNotification = 0;
+	EventBits_t xEventGroupValue = 0;
+	EventBits_t xBitsToWaitFor = I2C_MEM_WRITE_CPLT;
 
 	// Take semaphore, which protects access to gyroscope (I2C1)
 	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
@@ -989,9 +994,9 @@ static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, u
 			return pdFAIL;
 		}
 
-		// Wait for notification from ISR
-		xStatus = xTaskNotifyWait(0, 0xffffffff, &xNotification, pdMS_TO_TICKS(SHORT_DELAY));
-		if (pdPASS == xStatus && xNotification == I2C_MEM_WRITE_CPLT)
+		// Wait for I2C event bit to be set
+		xEventGroupValue = xEventGroupWaitBits(i2cEventHandle, xBitsToWaitFor, pdTRUE, pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
+		if (pdPASS == xStatus && (xEventGroupValue & xBitsToWaitFor))
 			return pdPASS;
 	}
 
