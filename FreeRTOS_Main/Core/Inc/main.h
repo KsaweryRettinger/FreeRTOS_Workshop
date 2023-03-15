@@ -92,6 +92,7 @@ void Error_Handler(void);
 #define ACCELGYRO_SCL_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+
 #define VDD (3.3)
 #define MAX_ADC_VAL_12_BITS (4095)
 #define TEMP_30 (30.0)
@@ -112,7 +113,8 @@ void Error_Handler(void);
 #define ACCELGYRO_SLEEP_MASK (0x40)
 #define ACCELGYRO_ACCEL_ADDR (0x3B)
 #define ACCELGYRO_GYRO_ADDR (0x43)
-// motion detection registers and bits from documentation
+
+// Motion detection registers and bits from documentation
 #define ACCELGYRO_INT_ENABLE_ADDR (0x38)
 #define ACCELGYRO_MOTION_INT_SET (0x40)
 #define ACCELGYRO_MOTION_INT_RESET (0x00)
@@ -123,6 +125,18 @@ void Error_Handler(void);
 #define ACCELGYRO_MOTION_THR_ADDR (0x1F)
 #define ACCELGYRO_MOTION_THR_10	(0x0A)
 #define ACCELGYRO_MOTION_THR_MASK (0xFF)
+
+// Motion status registers
+#define ACCELGYRO_INT_STATUS_ADDR (0x3A)
+#define ACCELGYRO_INT_STATUS_MOTION (0x40)
+#define ACCELGYRO_MOTION_STATUS_ADDR (0x61)
+#define ACCELGYRO_MOTION_STATUS_ADDR (0x61)
+#define ACCELGYRO_MOTION_STATUS_X_NEG (0x80)
+#define ACCELGYRO_MOTION_STATUS_X_POS (0x40)
+#define ACCELGYRO_MOTION_STATUS_Y_NEG (0x20)
+#define ACCELGYRO_MOTION_STATUS_Y_POS (0x10)
+#define ACCELGYRO_MOTION_STATUS_Z_NEG (0x08)
+#define ACCELGYRO_MOTION_STATUS_Z_POS (0x04)
 
 // Register and bit values from manuals
 /* USER CODE END Private defines */

@@ -126,13 +126,6 @@ const osThreadAttr_t printTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
-/* Definitions for buttonTask */
-osThreadId_t buttonTaskHandle;
-const osThreadAttr_t buttonTask_attributes = {
-  .name = "buttonTask",
-  .stack_size = 256 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
 /* Definitions for cpuTempTask */
 osThreadId_t cpuTempTaskHandle;
 const osThreadAttr_t cpuTempTask_attributes = {
@@ -184,16 +177,6 @@ osSemaphoreId_t uart2RxSemHandle;
 const osSemaphoreAttr_t uart2RxSem_attributes = {
   .name = "uart2RxSem"
 };
-/* Definitions for buttonSem */
-osSemaphoreId_t buttonSemHandle;
-const osSemaphoreAttr_t buttonSem_attributes = {
-  .name = "buttonSem"
-};
-/* Definitions for buttonPrintSem */
-osSemaphoreId_t buttonPrintSemHandle;
-const osSemaphoreAttr_t buttonPrintSem_attributes = {
-  .name = "buttonPrintSem"
-};
 /* Definitions for cpuTempPrintSem */
 osSemaphoreId_t cpuTempPrintSemHandle;
 const osSemaphoreAttr_t cpuTempPrintSem_attributes = {
@@ -223,6 +206,11 @@ const osSemaphoreAttr_t eventPrintSem_attributes = {
 osEventFlagsId_t i2cEventHandle;
 const osEventFlagsAttr_t i2cEvent_attributes = {
   .name = "i2cEvent"
+};
+/* Definitions for commonEvent */
+osEventFlagsId_t commonEventHandle;
+const osEventFlagsAttr_t commonEvent_attributes = {
+  .name = "commonEvent"
 };
 /* USER CODE BEGIN PV */
 
@@ -257,7 +245,6 @@ void cliTaskFunction(void *argument);
 void cliPrintTaskFunction(void *argument);
 void ledTaskFunction(void *argument);
 void printTaskFunction(void *argument);
-void buttonTaskFunction(void *argument);
 void cpuTempTaskFunction(void *argument);
 void accelGyroTaskFunction(void *argument);
 void eventTaskFunction(void *argument);
@@ -387,12 +374,6 @@ int main(void)
   /* creation of uart2RxSem */
   uart2RxSemHandle = osSemaphoreNew(1, 1, &uart2RxSem_attributes);
 
-  /* creation of buttonSem */
-  buttonSemHandle = osSemaphoreNew(1, 1, &buttonSem_attributes);
-
-  /* creation of buttonPrintSem */
-  buttonPrintSemHandle = osSemaphoreNew(1, 1, &buttonPrintSem_attributes);
-
   /* creation of cpuTempPrintSem */
   cpuTempPrintSemHandle = osSemaphoreNew(1, 1, &cpuTempPrintSem_attributes);
 
@@ -449,9 +430,6 @@ int main(void)
   /* creation of printTask */
   printTaskHandle = osThreadNew(printTaskFunction, NULL, &printTask_attributes);
 
-  /* creation of buttonTask */
-  buttonTaskHandle = osThreadNew(buttonTaskFunction, NULL, &buttonTask_attributes);
-
   /* creation of cpuTempTask */
   cpuTempTaskHandle = osThreadNew(cpuTempTaskFunction, NULL, &cpuTempTask_attributes);
 
@@ -468,6 +446,9 @@ int main(void)
   /* Create the event(s) */
   /* creation of i2cEvent */
   i2cEventHandle = osEventFlagsNew(&i2cEvent_attributes);
+
+  /* creation of commonEvent */
+  commonEventHandle = osEventFlagsNew(&commonEvent_attributes);
 
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
@@ -1523,48 +1504,6 @@ void printTaskFunction(void *argument)
   /* USER CODE END printTaskFunction */
 }
 
-/* USER CODE BEGIN Header_buttonTaskFunction */
-/**
-* @brief Function implementing the buttonTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_buttonTaskFunction */
-void buttonTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN buttonTaskFunction */
-  BaseType_t xStatus = pdFALSE;
-  StringData_t printString = {0};
-  char cText[OUTPUT_BUFFER_LEN] = {0};
-
-  // Initialize string data structure
-  vInitPrintStringData(&printString, cText, sizeof(cText), buttonPrintSemHandle);
-
-  // Initialize button pressed semaphore
-  xSemaphoreTake(buttonSemHandle, 0);
-
-  for(;;)
-  {
-  	// Wait for button press
-  	xStatus = xSemaphoreTake(buttonSemHandle, pdMS_TO_TICKS(STD_DELAY));
-   	if (xStatus == pdTRUE) {
-
-   		// Suspend/resume LED task and send message to terminal
-   		if (eTaskGetState(ledTaskHandle) != eSuspended) {
-   			vTaskSuspend(ledTaskHandle);
-   			xSendStringByQueue(&printString, printStringQueueHandle, "buttonTask - LED blink task suspended\r\n");
-   		} else {
-   			vTaskResume(ledTaskHandle);
-   			xSendStringByQueue(&printString, printStringQueueHandle, "buttonTask - LED blink task resumed\r\n");
-   		}
-
-   		// Delay task to minimize noise from button
-   		vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
-  	}
-  }
-  /* USER CODE END buttonTaskFunction */
-}
-
 /* USER CODE BEGIN Header_cpuTempTaskFunction */
 /**
 * @brief Function implementing the cpuTempTask thread.
@@ -1715,6 +1654,7 @@ void eventTaskFunction(void *argument)
 	uint32_t xNotification = 0;
 	char cText[OUTPUT_BUFFER_LEN] = {0};
 	StringData_t printString = {0};
+	uint8_t cValue = 0;
 
 	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
 
@@ -1722,7 +1662,26 @@ void eventTaskFunction(void *argument)
   {
     xNotification = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     if (xNotification != 0) {
-    	xSendStringByQueue(&printString, printStringQueueHandle, "eventTask: Motion interrupt!\r\n");
+
+    	// Read interrupt status register
+    	xAccelGyroMemRead(ACCELGYRO_INT_STATUS_ADDR, 1, &cValue, 1);
+
+    	// Check if motion interrupt is set
+    	if (cValue & ACCELGYRO_INT_STATUS_MOTION) {
+    		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Motion interrupt!\r\n");
+
+    		// Read motion status register and print motion information
+    		xAccelGyroMemRead(ACCELGYRO_MOTION_STATUS_ADDR, 1, &cValue, 1);
+    		xSendStringByQueue(&printString,
+    											 printStringQueueHandle,
+													 "[eventTask] Motion status: -X:%d +X:%d -Y:%d +Y:%d -Z:%d +Z:%d\r\n",
+													 (cValue & ACCELGYRO_MOTION_STATUS_X_NEG) ? 1 : 0,
+													 (cValue & ACCELGYRO_MOTION_STATUS_X_POS) ? 1 : 0,
+													 (cValue & ACCELGYRO_MOTION_STATUS_Y_NEG) ? 1 : 0,
+													 (cValue & ACCELGYRO_MOTION_STATUS_Y_POS) ? 1 : 0,
+													 (cValue & ACCELGYRO_MOTION_STATUS_Z_NEG) ? 1 : 0,
+													 (cValue & ACCELGYRO_MOTION_STATUS_Z_POS) ? 1 : 0);
+    	}
     }
   }
   /* USER CODE END eventTaskFunction */
