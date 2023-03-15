@@ -1789,10 +1789,41 @@ void eventTaskFunction(void *argument)
 void oledTaskFunction(void *argument)
 {
   /* USER CODE BEGIN oledTaskFunction */
-  /* Infinite loop */
+
+	// Initialize screen
+	ssd1331_init();
+
+	/* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+
+  	// Clear screen with different colors
+    ssd1331_clear_screen(BLACK);
+    vTaskDelay(1000);
+    ssd1331_clear_screen(WHITE);
+		vTaskDelay(1000);
+    ssd1331_clear_screen(RED);
+		vTaskDelay(1000);
+    ssd1331_clear_screen(BLUE);
+		vTaskDelay(1000);
+    ssd1331_clear_screen(GREEN);
+		vTaskDelay(1000);
+    ssd1331_clear_screen(BLACK);
+		vTaskDelay(1000);
+
+		// Display the funniest joke in the world
+		ssd1331_display_string(3, 0, (uint8_t *)"My dog's got no", FONT_1206, GREEN);
+		ssd1331_display_string(3, 12, (uint8_t *)"nose.", FONT_1206, GREEN);
+		vTaskDelay(1000);
+		ssd1331_display_string(27, 26, (uint8_t *)"How does he", FONT_1206, RED);
+		ssd1331_display_string(57, 38, (uint8_t *)"smell?", FONT_1206, RED);
+		vTaskDelay(1000);
+		ssd1331_display_string(3, 48, (uint8_t *)"Awful", FONT_1608, GREEN);
+		vTaskDelay(5000);
+
+		// Clear screen
+    ssd1331_clear_screen(BLACK);
+		vTaskDelay(1000);
   }
   /* USER CODE END oledTaskFunction */
 }

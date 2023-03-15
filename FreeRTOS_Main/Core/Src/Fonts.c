@@ -1,4 +1,4 @@
-#include "LIB_Config.h"
+/* #include "LIB_Config.h" */
 #include "Fonts.h"
 
 const uint8_t c_chFont1206[95][12] = {
