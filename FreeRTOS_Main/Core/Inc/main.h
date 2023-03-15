@@ -36,7 +36,7 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+extern SPI_HandleTypeDef hspi2;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -81,10 +81,10 @@ void Error_Handler(void);
 #define LD2_GPIO_Port GPIOA
 #define OLED_RES_Pin GPIO_PIN_4
 #define OLED_RES_GPIO_Port GPIOC
-#define OLED_CS_Pin GPIO_PIN_0
-#define OLED_CS_GPIO_Port GPIOB
-#define OLED_DC_Pin GPIO_PIN_1
-#define OLED_DC_GPIO_Port GPIOB
+#define OLED_OLED_CS_Pin GPIO_PIN_0
+#define OLED_OLED_CS_GPIO_Port GPIOB
+#define OLED_OLED_DC_Pin GPIO_PIN_1
+#define OLED_OLED_DC_GPIO_Port GPIOB
 #define OLED_SCK_Pin GPIO_PIN_13
 #define OLED_SCK_GPIO_Port GPIOB
 #define MOTION_INT_Pin GPIO_PIN_7
@@ -103,9 +103,6 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
-// Big endian to little endian conversion
-#define SWAP_UINT16(x) (((x) >> 8) | ((x) << 8))
-
 // Common event bits
 #define BUTTON_EVENT (0x1)
 #define MOTION_INT_EVENT (0x2)
@@ -116,7 +113,7 @@ void Error_Handler(void);
 
 // CPU temperature readings
 #define VDD (3.3)
-#define MAX_ADC_VAL_12_BITS (4095)
+#define MAX_AOLED_DC_VAL_12_BITS (4095)
 #define TEMP_30 (30.0)
 #define TEMP_110_MINUS_30 (80.0)
 
@@ -158,6 +155,21 @@ void Error_Handler(void);
 #define ACCELGYRO_MOTION_STATUS_Y_POS (0x10)
 #define ACCELGYRO_MOTION_STATUS_Z_NEG (0x08)
 #define ACCELGYRO_MOTION_STATUS_Z_POS (0x04)
+
+// Big endian to little endian conversion
+#define SWAP_UINT16(x) (((x) >> 8) | ((x) << 8))
+
+// Minimum value macro
+#define MIN(a,b) (((a) < (b)) ? (a) : (b))
+
+// OLED macros
+#define __SSD1331_RES_SET()           HAL_GPIO_WritePin(OLED_RES_GPIO_Port, OLED_RES_Pin, GPIO_PIN_SET)
+#define __SSD1331_RES_CLR()           HAL_GPIO_WritePin(OLED_RES_GPIO_Port, OLED_RES_Pin, GPIO_PIN_RESET)
+#define __SSD1331_DC_SET()            HAL_GPIO_WritePin(OLED_DC_GPIO_Port, OLED_DC_Pin, GPIO_PIN_SET)
+#define __SSD1331_DC_CLR()            HAL_GPIO_WritePin(OLED_DC_GPIO_Port, OLED_DC_Pin, GPIO_PIN_RESET)
+#define __SSD1331_CS_SET()            HAL_GPIO_WritePin(OLED_CS_GPIO_Port, OLED_CS_Pin, GPIO_PIN_SET)
+#define __SSD1331_CS_CLR()            HAL_GPIO_WritePin(OLED_CS_GPIO_Port, OLED_CS_Pin, GPIO_PIN_RESET)
+#define __SSD1331_WRITE_BYTE(__DATA)  HAL_SPI_Transmit(&hspi2, &__DATA, 1, 1000)
 
 /* USER CODE END Private defines */
 

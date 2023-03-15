@@ -33,6 +33,7 @@
 #include "math.h"
 #include "limits.h"
 #include "event_groups.h"
+#include "SSD1331.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
