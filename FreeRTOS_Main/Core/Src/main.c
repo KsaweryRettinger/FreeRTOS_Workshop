@@ -876,19 +876,19 @@ void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
 // Blue button pushed ISR
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
-	BaseType_t xStatus = pdTRUE;
+	EventBits_t xBitsToSet = 0;
 	BaseType_t xYieldRequired = 0;
 
 	//Check UART and give semaphore
 	if (GPIO_Pin == B1_Pin) {
-		xStatus = xSemaphoreGiveFromISR(buttonSemHandle, &xYieldRequired);
+		xBitsToSet = BUTTON_EVENT;
+		xEventGroupSetBitsFromISR(commonEventHandle, xBitsToSet, &xYieldRequired);
 	} else if (GPIO_Pin == MOTION_INT_Pin) {
-		vTaskNotifyGiveFromISR(eventTaskHandle, &xYieldRequired);
+		xBitsToSet = MOTION_INT_EVENT;
+		xEventGroupSetBitsFromISR(commonEventHandle, xBitsToSet, &xYieldRequired);
 	}
 
-	if (pdTRUE == xStatus) {
-		portYIELD_FROM_ISR(xYieldRequired);
-	}
+	portYIELD_FROM_ISR(xYieldRequired);
 }
 
 // ADC1 conversion complete ISR
@@ -1650,18 +1650,20 @@ void accelGyroTaskFunction(void *argument)
 void eventTaskFunction(void *argument)
 {
   /* USER CODE BEGIN eventTaskFunction */
-
-	uint32_t xNotification = 0;
 	char cText[OUTPUT_BUFFER_LEN] = {0};
 	StringData_t printString = {0};
 	uint8_t cValue = 0;
+	EventBits_t xBitsToWaitFor = (BUTTON_EVENT | MOTION_INT_EVENT);
+	EventBits_t xEventGroupValue = 0;
 
 	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
 
   for(;;)
   {
-    xNotification = ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (xNotification != 0) {
+    xEventGroupValue = xEventGroupWaitBits(commonEventHandle, xBitsToWaitFor, pdTRUE, pdFALSE, portMAX_DELAY);
+
+    // Motion event
+    if (xEventGroupValue & MOTION_INT_EVENT) {
 
     	// Read interrupt status register
     	xAccelGyroMemRead(ACCELGYRO_INT_STATUS_ADDR, 1, &cValue, 1);
@@ -1682,6 +1684,22 @@ void eventTaskFunction(void *argument)
 													 (cValue & ACCELGYRO_MOTION_STATUS_Z_NEG) ? 1 : 0,
 													 (cValue & ACCELGYRO_MOTION_STATUS_Z_POS) ? 1 : 0);
     	}
+    }
+
+    // Button event
+    if (xEventGroupValue & BUTTON_EVENT) {
+
+   		// Suspend/resume LED task and send message to terminal
+   		if (eTaskGetState(ledTaskHandle) != eSuspended) {
+   			vTaskSuspend(ledTaskHandle);
+   			xSendStringByQueue(&printString, printStringQueueHandle, "[buttonTask] LED blink task suspended\r\n");
+   		} else {
+   			vTaskResume(ledTaskHandle);
+   			xSendStringByQueue(&printString, printStringQueueHandle, "[buttonTask] LED blink task resumed\r\n");
+   		}
+
+   		// Add delay to minimize noise from button
+   		vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
     }
   }
   /* USER CODE END eventTaskFunction */

@@ -93,13 +93,24 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
+// Big endian to little endian conversion
+#define SWAP_UINT16(x) (((x) >> 8) | ((x) << 8))
+
+// Common event bits
+#define BUTTON_EVENT (0x1)
+#define MOTION_INT_EVENT (0x2)
+
+// I2C communication
+#define I2C_MEM_READ_CPLT (0x1)
+#define I2C_MEM_WRITE_CPLT (0x2)
+
+// CPU temperature readings
 #define VDD (3.3)
 #define MAX_ADC_VAL_12_BITS (4095)
 #define TEMP_30 (30.0)
 #define TEMP_110_MINUS_30 (80.0)
-#define I2C_MEM_READ_CPLT (0x1)
-#define I2C_MEM_WRITE_CPLT (0x2)
-#define SWAP_UINT16(x) (((x) >> 8) | ((x) << 8))
+
+// Accelerometer/gyroscope registers and bits
 #define ACCELGYRO_DEVICE (0xD0)
 #define ACCELGYRO_WHO_AM_I_ADDR (0x75)
 #define ACCELGYRO_DEFAULT_ACCEL (2)
@@ -114,7 +125,7 @@ void Error_Handler(void);
 #define ACCELGYRO_ACCEL_ADDR (0x3B)
 #define ACCELGYRO_GYRO_ADDR (0x43)
 
-// Motion detection registers and bits from documentation
+// Motion detection registers and bits
 #define ACCELGYRO_INT_ENABLE_ADDR (0x38)
 #define ACCELGYRO_MOTION_INT_SET (0x40)
 #define ACCELGYRO_MOTION_INT_RESET (0x00)
@@ -126,7 +137,7 @@ void Error_Handler(void);
 #define ACCELGYRO_MOTION_THR_10	(0x0A)
 #define ACCELGYRO_MOTION_THR_MASK (0xFF)
 
-// Motion status registers
+// Motion status registers and bits
 #define ACCELGYRO_INT_STATUS_ADDR (0x3A)
 #define ACCELGYRO_INT_STATUS_MOTION (0x40)
 #define ACCELGYRO_MOTION_STATUS_ADDR (0x61)
@@ -138,7 +149,6 @@ void Error_Handler(void);
 #define ACCELGYRO_MOTION_STATUS_Z_NEG (0x08)
 #define ACCELGYRO_MOTION_STATUS_Z_POS (0x04)
 
-// Register and bit values from manuals
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
