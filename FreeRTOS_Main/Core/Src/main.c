@@ -44,11 +44,14 @@ typedef enum {
 	BLINK_PERIOD,
 	PITCH,
 	ROLL,
+	TEMP,
+	MOTION
 } eDataType;
 
 // Union for sending different data types via queue
 typedef union {
 	uint32_t ui;
+	uint8_t uc;
 	float f;
 } unDataValue;
 
@@ -89,6 +92,7 @@ DMA_HandleTypeDef hdma_i2c1_rx;
 DMA_HandleTypeDef hdma_i2c1_tx;
 
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef hdma_spi2_tx;
 
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
@@ -177,6 +181,11 @@ osMessageQueueId_t cpuTempQueueHandle;
 const osMessageQueueAttr_t cpuTempQueue_attributes = {
   .name = "cpuTempQueue"
 };
+/* Definitions for oledDataQueue */
+osMessageQueueId_t oledDataQueueHandle;
+const osMessageQueueAttr_t oledDataQueue_attributes = {
+  .name = "oledDataQueue"
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -239,6 +248,11 @@ float gfGyroY = 0.0;
 float gfGyroZ = 0.0;
 float gfPitch = 0.0;
 float gfRoll = 0.0;
+
+// OLED screen variables
+uint16_t screenBuffer[OLED_SCREEN_HEIGHT][OLED_SCREEN_WIDTH] = {0};
+extern uint8_t mobicaLogo[];
+extern size_t mobicaLogoSize;
 
 /* USER CODE END PV */
 
@@ -422,6 +436,9 @@ int main(void)
 
   /* creation of cpuTempQueue */
   cpuTempQueueHandle = osMessageQueueNew (1, 4, &cpuTempQueue_attributes);
+
+  /* creation of oledDataQueue */
+  oledDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &oledDataQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -779,6 +796,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
@@ -1446,9 +1466,10 @@ void ledTaskFunction(void *argument)
 	BaseType_t xStatus = pdFALSE;
 	uint32_t uiBlinkPeriod = STD_DELAY;
 	TickType_t xLastWakeTime = 0;
-	Data_t receiveData = {0};
+	Data_t receiveData = {.type = BLINK_PERIOD, .value.ui = uiBlinkPeriod};
 
 	vTaskSuspend(NULL);
+	xQueueSend(oledDataQueueHandle, &receiveData, portMAX_DELAY);
 
 	for(;;)
   {
@@ -1461,13 +1482,12 @@ void ledTaskFunction(void *argument)
 			if (receiveData.type == BLINK_PERIOD) {
 				uiBlinkPeriod = receiveData.value.ui;
 				xQueueSend(printDataQueueHandle, &receiveData, portMAX_DELAY);
+				xQueueSend(oledDataQueueHandle, &receiveData, portMAX_DELAY);
 			}
 		}
 
 		// Toggle LED
   	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-
-  	// Delay next toggle until precise time
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
   }
   /* USER CODE END ledTaskFunction */
@@ -1612,6 +1632,7 @@ void cpuTempTaskFunction(void *argument)
 	// Text buffer and string data
 	char cText[OUTPUT_BUFFER_LEN] = {0};
 	StringData_t printString = {0};
+	Data_t oledData = {0};
 
 	vInitPrintStringData(&printString, cText, sizeof(cText), cpuTempPrintSemHandle);
 
@@ -1626,12 +1647,20 @@ void cpuTempTaskFunction(void *argument)
     	HAL_ADC_Start_DMA(&hadc1, (uint32_t *) sAdc1Value, 2);
     	xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
 
-    	// Calculate temperature and print results
     	if (xNotification != 0) {
-				fVdda = (VDD * (*psVddRefCalVal)) / *psVRefRead;
+
+    		// Calculate temperature
+    		fVdda = (VDD * (*psVddRefCalVal)) / *psVRefRead;
 				fVTempSens = (*psTempSenRead * fVdda) / MAX_ADC_VAL_12_BITS;
 				fCpuTemp = ((fVAtTemp30 - fVTempSens) / fVTempSenSlope) + TEMP_30;
+
+				// Send to terminal
 				xSendStringByQueue(&printString, printStringQueueHandle, "[cpuTempTask] CPU temperature: %.2fC\r\n", fCpuTemp);
+
+				// Send to OLED screen
+				oledData.type = TEMP;
+				oledData.value.f = fCpuTemp;
+				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
     	}
     }
   }
@@ -1652,6 +1681,7 @@ void accelGyroTaskFunction(void *argument)
   BaseType_t xStatus = pdFALSE;
   char cText[OUTPUT_BUFFER_LEN] = {0};
   StringData_t printString = {0};
+  Data_t oledData = {0};
 
   // Accelerometer readings
 	uint16_t sAccel[3] = {0};
@@ -1707,9 +1737,16 @@ void accelGyroTaskFunction(void *argument)
   	gfGyroY = fAxisY = (float) (sAxisYRaw * ACCELGYRO_DEFAULT_GYRO) / SHRT_MAX;
   	gfGyroZ = fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_GYRO) / SHRT_MAX;
 
-  	// Sample every 50ms
-  	vTaskDelay(pdMS_TO_TICKS(50));
+  	// Send pitch and roll values to OLED screen
+  	oledData.type = PITCH;
+  	oledData.value.f = fPitch;
+  	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+  	oledData.type = ROLL;
+  	oledData.value.f = fRoll;
+  	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
 
+  	// Delay next sample
+  	vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
   }
   /* USER CODE END accelGyroTaskFunction */
 }
@@ -1729,6 +1766,7 @@ void eventTaskFunction(void *argument)
 	uint8_t cValue = 0;
 	EventBits_t xBitsToWaitFor = (BUTTON_EVENT | MOTION_INT_EVENT);
 	EventBits_t xEventGroupValue = 0;
+	Data_t oledData = {0};
 
 	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
 
@@ -1746,7 +1784,7 @@ void eventTaskFunction(void *argument)
     	if (cValue & ACCELGYRO_INT_STATUS_MOTION) {
     		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Motion interrupt!\r\n");
 
-    		// Read motion status register and print motion information
+    		// Read motion status register and print motion information to terminal
     		xAccelGyroMemRead(ACCELGYRO_MOTION_STATUS_ADDR, 1, &cValue, 1);
     		xSendStringByQueue(&printString,
     											 printStringQueueHandle,
@@ -1757,6 +1795,14 @@ void eventTaskFunction(void *argument)
 													 (cValue & ACCELGYRO_MOTION_STATUS_Y_POS) ? 1 : 0,
 													 (cValue & ACCELGYRO_MOTION_STATUS_Z_NEG) ? 1 : 0,
 													 (cValue & ACCELGYRO_MOTION_STATUS_Z_POS) ? 1 : 0);
+
+				// Send to OLED screen
+				oledData.type = MOTION;
+				oledData.value.uc = cValue;
+				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+
+				// Add delay
+				vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
     	}
     }
 
@@ -1789,41 +1835,100 @@ void eventTaskFunction(void *argument)
 void oledTaskFunction(void *argument)
 {
   /* USER CODE BEGIN oledTaskFunction */
+	BaseType_t xStatus = pdFALSE;
+	char cText[TEXT_ARRAY] = {0};
+	Data_t printData = {0};
 
-	// Initialize screen
+	// Initialize screen and start continuous DMA transfer
 	ssd1331_init();
+	HAL_GPIO_WritePin(OLED_CS_GPIO_Port, OLED_CS_Pin, GPIO_PIN_RESET);
+	HAL_SPI_Transmit_DMA(&hspi2, (uint8_t *)screenBuffer, sizeof(screenBuffer));
+
+	// Cycle screen with different colors
+  ssd1331_clear_screen(BLACK);
+  vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+  ssd1331_clear_screen(WHITE);
+	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+  ssd1331_clear_screen(RED);
+	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+  ssd1331_clear_screen(BLUE);
+	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+  ssd1331_clear_screen(GREEN);
+	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+  ssd1331_clear_screen(BLACK);
+	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+
+	// Display Mobica logo
+	memcpy(screenBuffer, mobicaLogo, mobicaLogoSize);
+	vTaskDelay(3000);
+
+	// Clear screen
+  ssd1331_clear_screen(BLACK);
+	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
 
 	/* Infinite loop */
   for(;;)
   {
+  	xStatus = xQueueReceive(oledDataQueueHandle, &printData, portMAX_DELAY);
+  	if (pdTRUE == xStatus) {
+  		switch (printData.type) {
 
-  	// Clear screen with different colors
-    ssd1331_clear_screen(BLACK);
-    vTaskDelay(1000);
-    ssd1331_clear_screen(WHITE);
-		vTaskDelay(1000);
-    ssd1331_clear_screen(RED);
-		vTaskDelay(1000);
-    ssd1331_clear_screen(BLUE);
-		vTaskDelay(1000);
-    ssd1331_clear_screen(GREEN);
-		vTaskDelay(1000);
-    ssd1331_clear_screen(BLACK);
-		vTaskDelay(1000);
+  			case PITCH:
+  				// Clear 12 rows starting from row 0 and print pitch value at 0,0
+  				snprintf(cText, sizeof(cText), "Pitch: %.2f", printData.value.f);
+  				memset(&screenBuffer[0], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 0, (uint8_t *)cText, FONT_1206, RED);
+  				break;
 
-		// Display the funniest joke in the world
-		ssd1331_display_string(3, 0, (uint8_t *)"My dog's got no", FONT_1206, GREEN);
-		ssd1331_display_string(3, 12, (uint8_t *)"nose.", FONT_1206, GREEN);
-		vTaskDelay(1000);
-		ssd1331_display_string(27, 26, (uint8_t *)"How does he", FONT_1206, RED);
-		ssd1331_display_string(57, 38, (uint8_t *)"smell?", FONT_1206, RED);
-		vTaskDelay(1000);
-		ssd1331_display_string(3, 48, (uint8_t *)"Awful", FONT_1608, GREEN);
-		vTaskDelay(5000);
+  			case ROLL:
+  				// Clear 12 rows starting from row 16 and print roll value at 0,16
+  				snprintf(cText, sizeof(cText), "Roll: %.2f", printData.value.f);
+  				memset(&screenBuffer[16], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 16, (uint8_t *)cText, FONT_1206, BLUE);
+  				break;
 
-		// Clear screen
-    ssd1331_clear_screen(BLACK);
-		vTaskDelay(1000);
+  			case BLINK_PERIOD:
+  				// Clear 12 rows starting from row 32 and print blink rate at 0,32
+  				snprintf(cText, sizeof(cText), "Blink: %lu", printData.value.ui);
+  				memset(&screenBuffer[32], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 32, (uint8_t *)cText, FONT_1206, GREEN);
+  				break;
+
+  			case TEMP:
+  				// Clear 12 rows starting from row 48 and print CPU temperature at 0,48
+  				snprintf(cText, sizeof(cText), "Temp: %.2f", printData.value.f);
+  				memset(&screenBuffer[48], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 48, (uint8_t *)cText, FONT_1206, YELLOW);
+  				break;
+
+  			case MOTION:
+
+  				// Motion detected - flash screen
+  				for (uint8_t i = 0; i < 3; i++) {
+    			  ssd1331_clear_screen(RED);
+    				vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+    				ssd1331_clear_screen(BLACK);
+    				vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+  				}
+
+  				//Print motion status
+  				snprintf(cText, sizeof(cText),
+  								 "Motion detected:-X:%d +X:%d -Y:%d  +Y:%d -Z:%d +Z:%d",
+  								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_X_NEG) ? 1 : 0,
+  								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_X_POS) ? 1 : 0,
+  								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_Y_NEG) ? 1 : 0,
+  								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_Y_POS) ? 1 : 0,
+  								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_Z_NEG) ? 1 : 0,
+  								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_Z_POS) ? 1 : 0);
+  				ssd1331_display_string(0, 0, (uint8_t *)cText, FONT_1206, RED);
+
+  				// Add delay and clear screen
+  			  vTaskDelay(pdMS_TO_TICKS(3000));
+  				ssd1331_clear_screen(BLACK);
+  				break;
+  		}
+  	}
+
   }
   /* USER CODE END oledTaskFunction */
 }

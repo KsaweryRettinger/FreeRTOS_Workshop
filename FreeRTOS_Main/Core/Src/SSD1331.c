@@ -24,6 +24,7 @@
 #include "Fonts.h"
 #include "main.h"
 
+extern uint16_t screenBuffer[];
 unsigned int rotate=0;
 
 /* Private typedef -----------------------------------------------------------*/
@@ -123,6 +124,9 @@ void ssd1331_draw_point(uint8_t chXpos, uint8_t chYpos, uint16_t hwColor)
 		return;
 	}
 
+// Code is disabled as it sent data to the screen one byte at
+// a time, which is slow and requires blocking
+#if 0
     //set column point
     ssd1331_write_byte(SET_COLUMN_ADDRESS, SSD1331_CMD);
     ssd1331_write_byte(chXpos, SSD1331_CMD);
@@ -133,8 +137,12 @@ void ssd1331_draw_point(uint8_t chXpos, uint8_t chYpos, uint16_t hwColor)
     ssd1331_write_byte(OLED_HEIGHT - 1, SSD1331_CMD);
     
     //fill 16bit colour
-	ssd1331_write_byte(hwColor >> 8, SSD1331_DATA);
-	ssd1331_write_byte(hwColor, SSD1331_DATA);   
+    ssd1331_write_byte(hwColor >> 8, SSD1331_DATA);
+    ssd1331_write_byte(hwColor, SSD1331_DATA);
+#endif
+
+    // Update global array that represents all pixels on the screen
+    screenBuffer[(chYpos * OLED_WIDTH) + chXpos] = (hwColor >> 8) | (hwColor << 8);
 }
 
 void ssd1331_draw_line(uint8_t chXpos0, uint8_t chYpos0, uint8_t chXpos1, uint8_t chYpos1, uint16_t hwColor) 

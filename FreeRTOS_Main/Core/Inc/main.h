@@ -162,7 +162,10 @@ void Error_Handler(void);
 // Minimum value macro
 #define MIN(a,b) (((a) < (b)) ? (a) : (b))
 
-// OLED macros
+// OLED screen
+#define OLED_SCREEN_WIDTH (96)
+#define OLED_SCREEN_HEIGHT (64)
+#define TEXT_ARRAY (100)
 #define __SSD1331_RES_SET()           HAL_GPIO_WritePin(OLED_RES_GPIO_Port, OLED_RES_Pin, GPIO_PIN_SET)
 #define __SSD1331_RES_CLR()           HAL_GPIO_WritePin(OLED_RES_GPIO_Port, OLED_RES_Pin, GPIO_PIN_RESET)
 #define __SSD1331_DC_SET()            HAL_GPIO_WritePin(OLED_DC_GPIO_Port, OLED_DC_Pin, GPIO_PIN_SET)
