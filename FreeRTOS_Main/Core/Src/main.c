@@ -221,11 +221,6 @@ osSemaphoreId_t eventPrintSemHandle;
 const osSemaphoreAttr_t eventPrintSem_attributes = {
   .name = "eventPrintSem"
 };
-/* Definitions for i2cEvent */
-osEventFlagsId_t i2cEventHandle;
-const osEventFlagsAttr_t i2cEvent_attributes = {
-  .name = "i2cEvent"
-};
 /* Definitions for commonEvent */
 osEventFlagsId_t commonEventHandle;
 const osEventFlagsAttr_t commonEvent_attributes = {
@@ -285,11 +280,12 @@ static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 
 // FreeRTOS CLI callback functions
 BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
-BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvResetCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 // Utility functions for sending strings via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
@@ -311,10 +307,6 @@ const CLI_Command_Definition_t xClearCommand = {.pcCommand = "clear",
 																								.pcHelpString = "clear: \r\n Clears screen\r\n",
 																								.pxCommandInterpreter = prvClearCommand,
 																								.cExpectedNumberOfParameters = 0 };
-const CLI_Command_Definition_t xPrintCommand = {.pcCommand = "print",
-																								.pcHelpString = "print: \r\n Prints <word> <number of times>\r\n",
-																								.pxCommandInterpreter = prvPrintCommand,
-																								.cExpectedNumberOfParameters = 2 };
 const CLI_Command_Definition_t xLedCommand = {.pcCommand = "led",
 																								.pcHelpString = "led:\r\n Led blinking control: led [on|off]\r\n",
 																								.pxCommandInterpreter = prvLedCommand,
@@ -330,6 +322,14 @@ const CLI_Command_Definition_t xTempCommand = {.pcCommand = "temp",
 const CLI_Command_Definition_t xPitchRollCommand = {.pcCommand = "pitchroll",
 																								.pcHelpString = "pitchroll:\r\n Prints latest pitch and roll values\r\n",
 																								.pxCommandInterpreter = prvPitchRollCommand,
+																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xOledCommand = {.pcCommand = "oled",
+																								.pcHelpString = "oled:\r\n Turn display on/off: oled [on|off]\r\n",
+																								.pxCommandInterpreter = prvOledCommand,
+																								.cExpectedNumberOfParameters = 1 };
+const CLI_Command_Definition_t xResetCommand = {.pcCommand = "reset",
+																								.pcHelpString = "reset:\r\n Reset nucleo device\r\n",
+																								.pxCommandInterpreter = prvResetCommand,
 																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
@@ -353,11 +353,12 @@ int main(void)
 
   // Register FreeRTOS CLI commands
   FreeRTOS_CLIRegisterCommand(&xClearCommand);
-  FreeRTOS_CLIRegisterCommand(&xPrintCommand);
   FreeRTOS_CLIRegisterCommand(&xLedCommand);
   FreeRTOS_CLIRegisterCommand(&xBlinkCommand);
   FreeRTOS_CLIRegisterCommand(&xTempCommand);
   FreeRTOS_CLIRegisterCommand(&xPitchRollCommand);
+  FreeRTOS_CLIRegisterCommand(&xOledCommand);
+  FreeRTOS_CLIRegisterCommand(&xResetCommand);
 
   /* USER CODE END Init */
 
@@ -477,9 +478,6 @@ int main(void)
   /* USER CODE END RTOS_THREADS */
 
   /* Create the event(s) */
-  /* creation of i2cEvent */
-  i2cEventHandle = osEventFlagsNew(&i2cEvent_attributes);
-
   /* creation of commonEvent */
   commonEventHandle = osEventFlagsNew(&commonEvent_attributes);
 
@@ -925,12 +923,12 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
 	BaseType_t xStatus = pdFALSE;
 	BaseType_t xYieldRequired = pdFALSE;
 	BaseType_t xYieldRequiredSem = pdFALSE;
-	EventBits_t xBitsToSet = I2C_MEM_READ_CPLT;
+	EventBits_t xBitsToSet = I2C_MEM_READ_EVENT;
 
 	if (hi2c->Instance == I2C1) {
 
 		// Notify accelerometer task and give semaphore
-		xEventGroupSetBitsFromISR(i2cEventHandle, xBitsToSet, &xYieldRequired);
+		xEventGroupSetBitsFromISR(commonEventHandle, xBitsToSet, &xYieldRequired);
 		xStatus = xSemaphoreGiveFromISR(accelGyroSemHandle, &xYieldRequiredSem);
 
 		// Check if any of the calls caused a higher priority task to wake up
@@ -948,22 +946,12 @@ void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
 
 	BaseType_t xStatus = pdFALSE;
 	BaseType_t xYieldRequired = pdFALSE;
-	BaseType_t xYieldRequiredSem = pdFALSE;
-	EventBits_t xBitsToSet = I2C_MEM_WRITE_CPLT;
 
 	if (hi2c->Instance == I2C1) {
-
-		// Notify accelerometer task and give semaphore
-		xEventGroupSetBitsFromISR(i2cEventHandle, xBitsToSet, &xYieldRequired);
-		xStatus = xSemaphoreGiveFromISR(accelGyroSemHandle, &xYieldRequiredSem);
-
-		// Check if any of the calls caused a higher priority task to wake up
+		xStatus = xSemaphoreGiveFromISR(accelGyroSemHandle, &xYieldRequired);
 		if (xStatus == pdTRUE) {
-			xYieldRequired |= xYieldRequiredSem;
+			portYIELD_FROM_ISR(xYieldRequired);
 		}
-
-		// Yield if required
-		portYIELD_FROM_ISR(xYieldRequired);
 	}
 }
 
@@ -1024,17 +1012,16 @@ static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
 
 static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size) {
 
-	BaseType_t xStatus = pdFALSE;
+	BaseType_t xStatus = pdPASS;
 	HAL_StatusTypeDef i2cStatus = HAL_OK;
 	EventBits_t xEventGroupValue = 0;
-	EventBits_t xBitsToWaitFor = I2C_MEM_READ_CPLT;
+	EventBits_t xBitsToWaitFor = I2C_MEM_READ_EVENT;
 
 	// Take semaphore, which protects access to gyroscope (I2C1)
 	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
 
+	// Read from gyroscope
 	if (pdTRUE == xStatus) {
-
-		//Start I2C DMA transfer
 		i2cStatus = HAL_I2C_Mem_Read_DMA(&hi2c1, ACCELGYRO_DEVICE, MemAddress, MemAddSize, pData, Size);
 		if (HAL_OK != i2cStatus) {
 			xSemaphoreGive(accelGyroSemHandle);
@@ -1042,7 +1029,7 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 		}
 
 		// Wait for I2C event bit to be set
-		xEventGroupValue = xEventGroupWaitBits(i2cEventHandle, xBitsToWaitFor, pdTRUE, pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
+		xEventGroupValue = xEventGroupWaitBits(commonEventHandle, xBitsToWaitFor, pdTRUE, pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
 		if (pdPASS == xStatus && (xEventGroupValue & xBitsToWaitFor))
 			return pdPASS;
 	}
@@ -1052,30 +1039,22 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 
 static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size) {
 
-	BaseType_t xStatus = pdFALSE;
+	BaseType_t xStatus = pdPASS;
 	HAL_StatusTypeDef i2cStatus = HAL_OK;
-	EventBits_t xEventGroupValue = 0;
-	EventBits_t xBitsToWaitFor = I2C_MEM_WRITE_CPLT;
 
 	// Take semaphore, which protects access to gyroscope (I2C1)
 	xStatus = xSemaphoreTake(accelGyroSemHandle, pdMS_TO_TICKS(STD_DELAY));
 
+	// Write to gyroscope
 	if (pdTRUE == xStatus) {
-
-		//Start I2C DMA transfer
 		i2cStatus = HAL_I2C_Mem_Write_DMA(&hi2c1, ACCELGYRO_DEVICE, MemAddress, MemAddSize, pData, Size);
 		if (HAL_OK != i2cStatus) {
 			xSemaphoreGive(accelGyroSemHandle);
 			return pdFAIL;
 		}
-
-		// Wait for I2C event bit to be set
-		xEventGroupValue = xEventGroupWaitBits(i2cEventHandle, xBitsToWaitFor, pdTRUE, pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
-		if (pdPASS == xStatus && (xEventGroupValue & xBitsToWaitFor))
-			return pdPASS;
 	}
 
-	return pdFAIL;
+	return pdPASS;
 }
 
 static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t setValue, uint8_t valueMask) {
@@ -1134,48 +1113,9 @@ BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 
 	// Copy new-page character to output
 	if (xWriteBufferLen > 0)
-		strcpy(pcWriteBuffer, (char[]){NEWPAGE_CHAR, '\0'});
+		strncpy(pcWriteBuffer, (char[]){NEWPAGE_CHAR, '\0'}, xWriteBufferLen);
 
 	return pdFALSE;
-}
-
-// FreeRTOS CLI "print" command
-BaseType_t prvPrintCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
-
-	BaseType_t xParameter1StringLength = 0;
-	BaseType_t xParameter2StringLength = 0;
-	const char *pcParameter1 = NULL;
-	const char *pcParameter2 = NULL;
-	static int32_t lCounter = 0;
-
-	// Get first parameter
-	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
-	pcParameter2 = FreeRTOS_CLIGetParameter(pcCommandString, 2, &xParameter2StringLength);
-
-	// First iteration
-	if (lCounter == 0) {
-
-		// Get number of print iterations
-		lCounter = atoi(pcParameter2);
-		if (lCounter < 1) {
-			lCounter = 0;
-			strcpy(pcWriteBuffer, "[cli] Invalid command, value must be > 0\r\n");
-			return pdFALSE;
-		}
-	}
-
-	// Update command output
-	strncpy(pcWriteBuffer, pcParameter1, xParameter1StringLength);
-	lCounter--;
-
-	// Check for final output
-	if (lCounter == 0) {
-		strcat(pcWriteBuffer, "\r\n");
-		return pdFALSE;
-	}
-
-	// Continue processing
-	return pdTRUE;
 }
 
 // FreeRTOS CLI "led" command
@@ -1190,17 +1130,17 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	// Interpret command
 	if (strncmp(pcParameter1, "on", xParameter1StringLength) == 0)
 	{
-		strcpy(pcWriteBuffer, "[cli] Resuming LED task\r\n");
+		strncpy(pcWriteBuffer, "[cli] Resuming LED task\r\n", xWriteBufferLen);
 		vTaskResume(ledTaskHandle);
 	}
 	else if (strncmp(pcParameter1, "off", xParameter1StringLength) == 0)
 	{
-		strcpy(pcWriteBuffer, "[cli] Suspending LED task\r\n");
+		strncpy(pcWriteBuffer, "[cli] Suspending LED task\r\n", xWriteBufferLen);
 		vTaskSuspend(ledTaskHandle);
 	}
 	else
 	{
-		strcpy(pcWriteBuffer, "[cli] Invalid command\r\nsyntax: led [on|off]\r\n");
+		strncpy(pcWriteBuffer, "[cli] Invalid command\r\nsyntax: led [on|off]\r\n", xWriteBufferLen);
 	}
 
 	return pdFALSE;
@@ -1258,6 +1198,33 @@ BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, cons
 	printValue.value.f = gfRoll;
 	xQueueSend(printDataQueueHandle, &printValue, 0);
 
+	return pdFALSE;
+}
+
+BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	BaseType_t xParameter1StringLength = 0;
+	const char *pcParameter1 = NULL;
+
+	// Read command parameter
+	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
+
+	if (0 == strncmp(pcParameter1, "on", xParameter1StringLength)) {
+		strncpy(pcWriteBuffer, "[cli] Resuming oled task\r\n", xWriteBufferLen);
+		vTaskResume(oledTaskHandle);
+	} else if (0 == strncmp(pcParameter1, "off", xParameter1StringLength)) {
+		strncpy(pcWriteBuffer, "[cli] Suspending oled task\r\n", xWriteBufferLen);
+		vTaskSuspend(oledTaskHandle);
+		memset(screenBuffer, 0x0, sizeof(screenBuffer));
+	} else {
+		strncpy(pcWriteBuffer, "[cli] Invalid command\r\nsyntax: oled [on|off]\r\n", xWriteBufferLen);
+	}
+
+	return pdFALSE;
+}
+
+BaseType_t prvResetCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+	HAL_NVIC_SystemReset();
 	return pdFALSE;
 }
 
@@ -1469,7 +1436,7 @@ void ledTaskFunction(void *argument)
 	Data_t receiveData = {.type = BLINK_PERIOD, .value.ui = uiBlinkPeriod};
 
 	vTaskSuspend(NULL);
-	xQueueSend(oledDataQueueHandle, &receiveData, portMAX_DELAY);
+	xQueueSend(oledDataQueueHandle, &receiveData, pdMS_TO_TICKS(SHORT_DELAY));
 
 	for(;;)
   {
@@ -1481,8 +1448,8 @@ void ledTaskFunction(void *argument)
 		if (xStatus == pdTRUE) {
 			if (receiveData.type == BLINK_PERIOD) {
 				uiBlinkPeriod = receiveData.value.ui;
-				xQueueSend(printDataQueueHandle, &receiveData, portMAX_DELAY);
-				xQueueSend(oledDataQueueHandle, &receiveData, portMAX_DELAY);
+				xQueueSend(printDataQueueHandle, &receiveData, pdMS_TO_TICKS(SHORT_DELAY));
+				xQueueSend(oledDataQueueHandle, &receiveData, pdMS_TO_TICKS(SHORT_DELAY));
 			}
 		}
 

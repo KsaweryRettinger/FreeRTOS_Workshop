@@ -106,10 +106,7 @@ void Error_Handler(void);
 // Common event bits
 #define BUTTON_EVENT (0x1)
 #define MOTION_INT_EVENT (0x2)
-
-// I2C communication
-#define I2C_MEM_READ_CPLT (0x1)
-#define I2C_MEM_WRITE_CPLT (0x2)
+#define I2C_MEM_READ_EVENT (0x4)
 
 // CPU temperature readings
 #define VDD (3.3)
