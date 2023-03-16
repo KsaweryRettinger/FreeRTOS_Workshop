@@ -49,6 +49,8 @@ extern SPI_HandleTypeDef hspi2;
 
 /* USER CODE END EM */
 
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
+
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -73,6 +75,8 @@ void Error_Handler(void);
 #define Joy_Y_GPIO_Port GPIOC
 #define OLED_MOSI_Pin GPIO_PIN_3
 #define OLED_MOSI_GPIO_Port GPIOC
+#define DIST_ECHO_Pin GPIO_PIN_0
+#define DIST_ECHO_GPIO_Port GPIOA
 #define USART_TX_Pin GPIO_PIN_2
 #define USART_TX_GPIO_Port GPIOA
 #define USART_RX_Pin GPIO_PIN_3
@@ -96,6 +100,8 @@ void Error_Handler(void);
 #define TCK_GPIO_Port GPIOA
 #define SWO_Pin GPIO_PIN_3
 #define SWO_GPIO_Port GPIOB
+#define DIST_TRIGGER_Pin GPIO_PIN_6
+#define DIST_TRIGGER_GPIO_Port GPIOB
 #define ACCELGYRO_SDA_Pin GPIO_PIN_7
 #define ACCELGYRO_SDA_GPIO_Port GPIOB
 #define ACCELGYRO_SCL_Pin GPIO_PIN_8
@@ -170,6 +176,9 @@ void Error_Handler(void);
 #define __SSD1331_CS_SET()            HAL_GPIO_WritePin(OLED_CS_GPIO_Port, OLED_CS_Pin, GPIO_PIN_SET)
 #define __SSD1331_CS_CLR()            HAL_GPIO_WritePin(OLED_CS_GPIO_Port, OLED_CS_Pin, GPIO_PIN_RESET)
 #define __SSD1331_WRITE_BYTE(__DATA)  HAL_SPI_Transmit(&hspi2, __DATA, 1, 1000)
+
+// Distance sensor
+#define TIME_TO_DIST_CM (58)
 
 /* USER CODE END Private defines */
 

@@ -45,7 +45,8 @@ typedef enum {
 	PITCH,
 	ROLL,
 	TEMP,
-	MOTION
+	MOTION,
+	DISTANCE
 } eDataType;
 
 // Union for sending different data types via queue
@@ -93,6 +94,10 @@ DMA_HandleTypeDef hdma_i2c1_tx;
 
 SPI_HandleTypeDef hspi2;
 DMA_HandleTypeDef hdma_spi2_tx;
+
+TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim5;
+DMA_HandleTypeDef hdma_tim5_ch1;
 
 UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
@@ -158,6 +163,13 @@ const osThreadAttr_t eventTask_attributes = {
 osThreadId_t oledTaskHandle;
 const osThreadAttr_t oledTask_attributes = {
   .name = "oledTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for distTask */
+osThreadId_t distTaskHandle;
+const osThreadAttr_t distTask_attributes = {
+  .name = "distTask",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
@@ -260,6 +272,8 @@ static void MX_ADC1_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_SPI2_Init(void);
+static void MX_TIM4_Init(void);
+static void MX_TIM5_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void cliPrintTaskFunction(void *argument);
@@ -269,6 +283,7 @@ void cpuTempTaskFunction(void *argument);
 void accelGyroTaskFunction(void *argument);
 void eventTaskFunction(void *argument);
 void oledTaskFunction(void *argument);
+void distTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -377,6 +392,8 @@ int main(void)
   MX_ADC2_Init();
   MX_I2C1_Init();
   MX_SPI2_Init();
+  MX_TIM4_Init();
+  MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
@@ -472,6 +489,9 @@ int main(void)
 
   /* creation of oledTask */
   oledTaskHandle = osThreadNew(oledTaskFunction, NULL, &oledTask_attributes);
+
+  /* creation of distTask */
+  distTaskHandle = osThreadNew(distTaskFunction, NULL, &distTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -748,6 +768,127 @@ static void MX_SPI2_Init(void)
 }
 
 /**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OnePulse_Init(&htim4, TIM_OPMODE_SINGLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+  HAL_TIM_MspPostInit(&htim4);
+
+}
+
+/**
+  * @brief TIM5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM5_Init(void)
+{
+
+  /* USER CODE BEGIN TIM5_Init 0 */
+
+  /* USER CODE END TIM5_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM5_Init 1 */
+
+  /* USER CODE END TIM5_Init 1 */
+  htim5.Instance = TIM5;
+  htim5.Init.Prescaler = 0;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period = 4294967295;
+  htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim5, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_BOTHEDGE;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim5, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM5_Init 2 */
+
+  /* USER CODE END TIM5_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -794,6 +935,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
   /* DMA1_Stream4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
@@ -955,7 +1099,7 @@ void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
 	}
 }
 
-// Blue button pushed ISR
+// GPIO event ISR
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 
 	EventBits_t xBitsToSet = 0;
@@ -987,6 +1131,17 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 			portYIELD_FROM_ISR(xYieldRequired);
 		}
 	}
+}
+
+// Timer input capture ISR
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
+
+	BaseType_t xYieldRequired = pdFALSE;
+
+	// Check for echo from distance sensor
+	if (htim->Instance == TIM5)
+		vTaskNotifyGiveFromISR(distTaskHandle, &xYieldRequired);
+	portYIELD_FROM_ISR(xYieldRequired);
 }
 
 // Wrapper function for sending data using a stream buffer
@@ -1436,7 +1591,6 @@ void ledTaskFunction(void *argument)
 	Data_t receiveData = {.type = BLINK_PERIOD, .value.ui = uiBlinkPeriod};
 
 	vTaskSuspend(NULL);
-	xQueueSend(oledDataQueueHandle, &receiveData, pdMS_TO_TICKS(SHORT_DELAY));
 
 	for(;;)
   {
@@ -1859,6 +2013,14 @@ void oledTaskFunction(void *argument)
   				snprintf(cText, sizeof(cText), "Blink: %lu", printData.value.ui);
   				memset(&screenBuffer[32], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
   				ssd1331_display_string(0, 32, (uint8_t *)cText, FONT_1206, GREEN);
+  				vTaskDelay(pdMS_TO_TICKS(2000));
+  				break;
+
+  			case DISTANCE:
+  				// Clear 12 rows starting from row 32 and distance sensor reading at 0,32
+  				snprintf(cText, sizeof(cText), "Distance: %lucm", printData.value.ui);
+  				memset(&screenBuffer[32], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 32, (uint8_t *)cText, FONT_1206, GREEN);
   				break;
 
   			case TEMP:
@@ -1898,6 +2060,59 @@ void oledTaskFunction(void *argument)
 
   }
   /* USER CODE END oledTaskFunction */
+}
+
+/* USER CODE BEGIN Header_distTaskFunction */
+/**
+* @brief Function implementing the distTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_distTaskFunction */
+void distTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN distTaskFunction */
+
+	BaseType_t xNotification = 0;
+	uint32_t uiTimerTicksToUs = (SystemCoreClock / 2) / 1000000;
+	uint32_t xTriggerTicks = uiTimerTicksToUs * 20;
+	uint32_t xEchoRead[2] = {0};
+	uint32_t uiDistance = 0;
+	Data_t oledData = {0};
+
+	// Setup trigger timer (one pulse PWM)
+	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1);
+	__HAL_TIM_SET_AUTORELOAD(&htim4, xTriggerTicks + 1);
+
+	// Start circular DMA transfer for input capture timer
+	HAL_TIM_IC_Start_DMA(&htim5, TIM_CHANNEL_1, xEchoRead, 2);
+
+	/* Infinite loop */
+	for(;;)
+	{
+			// Send 20us trigger pulse and wait for echo notification
+			HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+			xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(STD_DELAY));
+
+			if (0 != xNotification) {
+
+				// Calculate distance in cm
+				uiDistance = (uint32_t) ((xEchoRead[1] - xEchoRead[0]) / uiTimerTicksToUs) / TIME_TO_DIST_CM;
+
+				// Send to OLED screen
+				oledData.type = DISTANCE;
+				oledData.value.ui = uiDistance;
+				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+			}
+
+			// Stop trigger timer (API requirement)
+			HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
+
+			// Add delay
+			vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
+	}
+
+  /* USER CODE END distTaskFunction */
 }
 
 /**
