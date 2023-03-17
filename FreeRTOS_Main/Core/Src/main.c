@@ -22,6 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "stdbool.h"
 #include "string.h"
 #include "semphr.h"
 #include "stdio.h"
@@ -44,9 +45,11 @@ typedef enum {
 	BLINK_PERIOD,
 	PITCH,
 	ROLL,
-	TEMP,
+	CPUTEMP,
 	MOTION,
-	DISTANCE
+	DISTANCE,
+	TEMPERATURE,
+	HUMIDITY
 } eDataType;
 
 // Union for sending different data types via queue
@@ -95,8 +98,10 @@ DMA_HandleTypeDef hdma_i2c1_tx;
 SPI_HandleTypeDef hspi2;
 DMA_HandleTypeDef hdma_spi2_tx;
 
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
+DMA_HandleTypeDef hdma_tim1_ch1;
 DMA_HandleTypeDef hdma_tim5_ch1;
 
 UART_HandleTypeDef huart2;
@@ -180,6 +185,13 @@ const osThreadAttr_t distTriggerTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for tempHumTask */
+osThreadId_t tempHumTaskHandle;
+const osThreadAttr_t tempHumTask_attributes = {
+  .name = "tempHumTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for blinkPeriodQueue */
 osMessageQueueId_t blinkPeriodQueueHandle;
 const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
@@ -240,6 +252,11 @@ osSemaphoreId_t eventPrintSemHandle;
 const osSemaphoreAttr_t eventPrintSem_attributes = {
   .name = "eventPrintSem"
 };
+/* Definitions for tempHumPrintSem */
+osSemaphoreId_t tempHumPrintSemHandle;
+const osSemaphoreAttr_t tempHumPrintSem_attributes = {
+  .name = "tempHumPrintSem"
+};
 /* Definitions for commonEvent */
 osEventFlagsId_t commonEventHandle;
 const osEventFlagsAttr_t commonEvent_attributes = {
@@ -281,6 +298,7 @@ static void MX_I2C1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_TIM1_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void cliPrintTaskFunction(void *argument);
@@ -292,6 +310,7 @@ void eventTaskFunction(void *argument);
 void oledTaskFunction(void *argument);
 void distTaskFunction(void *argument);
 void distTriggerFunction(void *argument);
+void tempHumTaskFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -402,6 +421,7 @@ int main(void)
   MX_SPI2_Init();
   MX_TIM4_Init();
   MX_TIM5_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
@@ -441,6 +461,9 @@ int main(void)
 
   /* creation of eventPrintSem */
   eventPrintSemHandle = osSemaphoreNew(1, 1, &eventPrintSem_attributes);
+
+  /* creation of tempHumPrintSem */
+  tempHumPrintSemHandle = osSemaphoreNew(1, 1, &tempHumPrintSem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -503,6 +526,9 @@ int main(void)
 
   /* creation of distTriggerTask */
   distTriggerTaskHandle = osThreadNew(distTriggerFunction, NULL, &distTriggerTask_attributes);
+
+  /* creation of tempHumTask */
+  tempHumTaskHandle = osThreadNew(tempHumTaskFunction, NULL, &tempHumTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -779,6 +805,72 @@ static void MX_SPI2_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 15;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 65535;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_DISABLE;
+  sSlaveConfig.InputTrigger = TIM_TS_ITR0;
+  if (HAL_TIM_SlaveConfigSynchro(&htim1, &sSlaveConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 15;
+  if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
   * @brief TIM4 Initialization Function
   * @param None
   * @retval None
@@ -964,6 +1056,9 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
   /* DMA2_Stream2_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
@@ -1799,7 +1894,7 @@ void cpuTempTaskFunction(void *argument)
 				xSendStringByQueue(&printString, printStringQueueHandle, "[cpuTempTask] CPU temperature: %.2fC\r\n", fCpuTemp);
 
 				// Send to OLED screen
-				oledData.type = TEMP;
+				oledData.type = CPUTEMP;
 				oledData.value.f = fCpuTemp;
 				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
     	}
@@ -1830,11 +1925,15 @@ void accelGyroTaskFunction(void *argument)
 	int16_t sAxisXRaw = 0;
 	int16_t sAxisYRaw = 0;
 	int16_t sAxisZRaw = 0;
+	uint8_t sampleNum = 0;
+	bool bDataReady = false;
 	float fAxisX = 0.0;
 	float fAxisY = 0.0;
 	float fAxisZ = 0.0;
 	float fPitch = 0.0;
 	float fRoll = 0.0;
+	float fPitchWin[ACCELGYRO_WIN_SIZE] = {0.0};
+	float fRollWin[ACCELGYRO_WIN_SIZE] = {0.0};
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = ACCEL_GYRO_INIT_EVENT;
@@ -1872,8 +1971,11 @@ void accelGyroTaskFunction(void *argument)
   	gfAccelZ = fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_ACCEL) / SHRT_MAX;
 
   	// Calculate pitch and roll
-  	gfPitch = fPitch = atan2(fAxisY, fAxisZ) * 57.3;
-  	gfRoll = fRoll = atan2((-fAxisX), sqrt(fAxisY * fAxisY + fAxisZ * fAxisZ)) * 57.3;
+  	fPitchWin[sampleNum] = atan2(fAxisY, fAxisZ) * 57.3;
+  	fRollWin[sampleNum] = atan2((-fAxisX), sqrt(fAxisY * fAxisY + fAxisZ * fAxisZ)) * 57.3;
+  	sampleNum = (sampleNum + 1) % ACCELGYRO_WIN_SIZE;
+  	if (!bDataReady && (sampleNum == 0))
+  		bDataReady = true;
 
   	// Read X, Y and Z axis gyroscope values (2x 1-byte register per axis, 6 bytes total)
   	xAccelGyroMemRead(ACCELGYRO_GYRO_ADDR, 1, (uint8_t *)&sGyro[0], sizeof(sGyro));
@@ -1888,13 +1990,28 @@ void accelGyroTaskFunction(void *argument)
   	gfGyroY = fAxisY = (float) (sAxisYRaw * ACCELGYRO_DEFAULT_GYRO) / SHRT_MAX;
   	gfGyroZ = fAxisZ = (float) (sAxisZRaw * ACCELGYRO_DEFAULT_GYRO) / SHRT_MAX;
 
-  	// Send pitch and roll values to OLED screen
-  	oledData.type = PITCH;
-  	oledData.value.f = fPitch;
-  	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
-  	oledData.type = ROLL;
-  	oledData.value.f = fRoll;
-  	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+  	if (bDataReady) {
+
+  		// Sum readings
+  	  gfPitch = fPitch = 0;
+  		gfRoll = fRoll = 0;
+  		for (uint8_t i = 0; i < ACCELGYRO_WIN_SIZE; i++) {
+  			fPitch += fPitchWin[i];
+  			fRoll += fRollWin[i];
+  		}
+
+  		// Calculate average
+  		gfPitch = fPitch = fPitch / ACCELGYRO_WIN_SIZE;
+  		gfRoll = fRoll = fRoll / ACCELGYRO_WIN_SIZE;
+
+  		// Send data to OLED screen
+    	oledData.type = PITCH;
+    	oledData.value.f = fPitch;
+    	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+    	oledData.type = ROLL;
+    	oledData.value.f = fRoll;
+    	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+  	}
 
   	// Delay next sample
   	vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
@@ -2052,38 +2169,53 @@ void oledTaskFunction(void *argument)
 
   			case PITCH:
   				// Clear 12 rows starting from row 0 and print pitch value at 0,0
-  				snprintf(cText, sizeof(cText), "Pitch: %.2f", printData.value.f);
+  				snprintf(cText, sizeof(cText), "Pitch: %.1f", printData.value.f);
   				memset(&screenBuffer[0], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
   				ssd1331_display_string(0, 0, (uint8_t *)cText, FONT_1206, RED);
   				break;
 
   			case ROLL:
-  				// Clear 12 rows starting from row 16 and print roll value at 0,16
-  				snprintf(cText, sizeof(cText), "Roll: %.2f", printData.value.f);
-  				memset(&screenBuffer[16], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
-  				ssd1331_display_string(0, 16, (uint8_t *)cText, FONT_1206, BLUE);
-  				break;
-
-  			case BLINK_PERIOD:
-  				// Clear 12 rows starting from row 32 and print blink rate at 0,32
-  				snprintf(cText, sizeof(cText), "Blink: %lu", printData.value.ui);
-  				memset(&screenBuffer[32], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
-  				ssd1331_display_string(0, 32, (uint8_t *)cText, FONT_1206, GREEN);
-  				vTaskDelay(pdMS_TO_TICKS(2000));
+  				// Clear 12 rows starting from row 13 and print roll value at 0,13
+  				snprintf(cText, sizeof(cText), "Roll: %.1f", printData.value.f);
+  				memset(&screenBuffer[13], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 13, (uint8_t *)cText, FONT_1206, BLUE);
   				break;
 
   			case DISTANCE:
-  				// Clear 12 rows starting from row 32 and distance sensor reading at 0,32
+  				// Clear 12 rows starting from row 26 and distance sensor reading at 0,26
   				snprintf(cText, sizeof(cText), "Distance: %lucm", printData.value.ui);
-  				memset(&screenBuffer[32], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
-  				ssd1331_display_string(0, 32, (uint8_t *)cText, FONT_1206, GREEN);
+  				memset(&screenBuffer[26], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 26, (uint8_t *)cText, FONT_1206, GREEN);
   				break;
 
-  			case TEMP:
-  				// Clear 12 rows starting from row 48 and print CPU temperature at 0,48
-  				snprintf(cText, sizeof(cText), "Temp: %.2f", printData.value.f);
-  				memset(&screenBuffer[48], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
-  				ssd1331_display_string(0, 48, (uint8_t *)cText, FONT_1206, YELLOW);
+  			case TEMPERATURE:
+  				// Clear 12 rows starting from row 39 and print temperature at 0,39
+  				snprintf(cText, sizeof(cText), "Temp: %.1f", printData.value.f);
+  				memset(&screenBuffer[39], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 39, (uint8_t *)cText, FONT_1206, YELLOW);
+  				break;
+
+  			case HUMIDITY:
+  				// Clear 12 rows starting from row 52 and print humidity at 0,52
+  				snprintf(cText, sizeof(cText), "Humidity: %.1f", printData.value.f);
+  				memset(&screenBuffer[52], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 52, (uint8_t *)cText, FONT_1206, YELLOW);
+  				break;
+
+  			case BLINK_PERIOD:
+  				// Clear 12 rows starting from row 26 and (temporarily) print blink rate at 0,26
+  				snprintf(cText, sizeof(cText), "Blink: %lu", printData.value.ui);
+  				memset(&screenBuffer[26], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 26, (uint8_t *)cText, FONT_1206, GREEN);
+  				vTaskDelay(pdMS_TO_TICKS(2000));
+  				break;
+
+  			case CPUTEMP:
+  				// Clear 12 rows starting from row 39 and (temporarily) print CPU temperature at 0,39
+  				snprintf(cText, sizeof(cText), "CPU Temp: %.1f", printData.value.f);
+  				memset(&screenBuffer[39], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
+  				ssd1331_display_string(0, 39, (uint8_t *)cText, FONT_1206, YELLOW);
+  				vTaskDelay(pdMS_TO_TICKS(2000));
   				break;
 
   			case MOTION:
@@ -2105,7 +2237,7 @@ void oledTaskFunction(void *argument)
   								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_Y_POS) ? 1 : 0,
   								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_Z_NEG) ? 1 : 0,
   								 (printData.value.uc & ACCELGYRO_MOTION_STATUS_Z_POS) ? 1 : 0);
-  				ssd1331_display_string(0, 0, (uint8_t *)cText, FONT_1206, RED);
+  				ssd1331_display_string(0, 13, (uint8_t *)cText, FONT_1206, RED);
 
   				// Add delay and clear screen
   			  vTaskDelay(pdMS_TO_TICKS(3000));
@@ -2113,54 +2245,8 @@ void oledTaskFunction(void *argument)
   				break;
   		}
   	}
-
   }
   /* USER CODE END oledTaskFunction */
-}
-
-/* USER CODE BEGIN Header_distTriggerFunction */
-/**
-* @brief Function implementing the distTriggerTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_distTriggerFunction */
-void distTriggerFunction(void *argument)
-{
-  /* USER CODE BEGIN distTriggerFunction */
-
-	uint32_t uiTimerTicksToUs = (SystemCoreClock / 2) / 1000000;
-	uint32_t xTriggerTicks = uiTimerTicksToUs * 20;
-
-	// Task synchronization bits
-	EventBits_t xEventGroupValue = 0;
-	EventBits_t uxThisTasksSyncBits = DIST_TRIGGER_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT);
-
-	// Setup trigger timer (one pulse PWM)
-	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1);
-	__HAL_TIM_SET_AUTORELOAD(&htim4, xTriggerTicks + 1);
-
-	// Synchronize task initialization
-	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
-
-  /* Infinite loop */
-  for(;;)
-  {
-		// Send 20us trigger pulse
-		HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
-
-		// Wait for echo
-		xEventGroupValue = xEventGroupWaitBits(commonEventHandle, DIST_ECHO_EVENT, pdTRUE, pdTRUE, pdMS_TO_TICKS(STD_DELAY));
-
-		//Stop timer and add delay between trigger pulses
-		if (xEventGroupValue & DIST_ECHO_EVENT) {
-			HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
-			vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
-		}
-  }
-  /* USER CODE END distTriggerFunction */
 }
 
 /* USER CODE BEGIN Header_distTaskFunction */
@@ -2213,6 +2299,69 @@ void distTaskFunction(void *argument)
 	}
 
   /* USER CODE END distTaskFunction */
+}
+
+/* USER CODE BEGIN Header_distTriggerFunction */
+/**
+* @brief Function implementing the distTriggerTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_distTriggerFunction */
+void distTriggerFunction(void *argument)
+{
+  /* USER CODE BEGIN distTriggerFunction */
+
+	uint32_t uiTimerTicksToUs = (SystemCoreClock / 2) / 1000000;
+	uint32_t xTriggerTicks = uiTimerTicksToUs * 20;
+
+	// Task synchronization bits
+	EventBits_t xEventGroupValue = 0;
+	EventBits_t uxThisTasksSyncBits = DIST_TRIGGER_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT);
+
+	// Setup trigger timer (one pulse PWM)
+	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1);
+	__HAL_TIM_SET_AUTORELOAD(&htim4, xTriggerTicks + 1);
+
+	// Synchronize task initialization
+	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
+
+  /* Infinite loop */
+  for(;;)
+  {
+		// Send 20us trigger pulse
+		HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+
+		// Wait for echo
+		xEventGroupValue = xEventGroupWaitBits(commonEventHandle, DIST_ECHO_EVENT, pdTRUE, pdTRUE, pdMS_TO_TICKS(STD_DELAY));
+
+		//Stop timer and add delay between trigger pulses
+		if (xEventGroupValue & DIST_ECHO_EVENT) {
+			HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
+			vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
+		}
+  }
+  /* USER CODE END distTriggerFunction */
+}
+
+/* USER CODE BEGIN Header_tempHumTaskFunction */
+/**
+* @brief Function implementing the tempHumTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_tempHumTaskFunction */
+void tempHumTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN tempHumTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END tempHumTaskFunction */
 }
 
 /**

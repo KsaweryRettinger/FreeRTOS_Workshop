@@ -94,6 +94,8 @@ void Error_Handler(void);
 #define MOTION_INT_Pin GPIO_PIN_7
 #define MOTION_INT_GPIO_Port GPIOC
 #define MOTION_INT_EXTI_IRQn EXTI9_5_IRQn
+#define TEMP_HUM_SENS_Pin GPIO_PIN_8
+#define TEMP_HUM_SENS_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
@@ -122,6 +124,7 @@ void Error_Handler(void);
 #define DIST_INIT_EVENT (0x80)
 #define DIST_TRIGGER_INIT_EVENT (0x100)
 #define DIST_ECHO_EVENT (0x200)
+#define TEMP_HUM_IC_CPLT (0x400)
 
 // CPU temperature readings
 #define VDD (3.3)
@@ -130,6 +133,7 @@ void Error_Handler(void);
 #define TEMP_110_MINUS_30 (80.0)
 
 // Accelerometer/gyroscope registers and bits
+#define ACCELGYRO_WIN_SIZE (10)
 #define ACCELGYRO_DEVICE (0xD0)
 #define ACCELGYRO_WHO_AM_I_ADDR (0x75)
 #define ACCELGYRO_DEFAULT_ACCEL (2)
