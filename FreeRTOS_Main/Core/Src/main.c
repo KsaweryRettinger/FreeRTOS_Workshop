@@ -1750,12 +1750,21 @@ void cpuTempTaskFunction(void *argument)
 	float fVTempSens = 0.0;
 	float fCpuTemp = 0.0;
 
+	// Task synchronization bits
+	EventBits_t uxThisTasksSyncBits = CPU_TEMP_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT | DIST_INIT_EVENT);
+
 	// Text buffer and string data
 	char cText[OUTPUT_BUFFER_LEN] = {0};
 	StringData_t printString = {0};
 	Data_t oledData = {0};
 
+	// Initialize string data
 	vInitPrintStringData(&printString, cText, sizeof(cText), cpuTempPrintSemHandle);
+
+	// Synchronize task initialization
+	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 
   for(;;)
   {
@@ -1816,13 +1825,23 @@ void accelGyroTaskFunction(void *argument)
 	float fPitch = 0.0;
 	float fRoll = 0.0;
 
+	// Task synchronization bits
+	EventBits_t uxThisTasksSyncBits = ACCEL_GYRO_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
+																 OLED_INIT_EVENT | DIST_INIT_EVENT);
+
 	// Initialize struct used for printing data
 	vInitPrintStringData(&printString, cText, sizeof(cText), accelGyroPrintSemHandle);
+
+	// Synchronize task initialization
+	xEventGroupWaitBits(commonEventHandle, OLED_INIT_EVENT, pdFALSE, pdTRUE, pdMS_TO_TICKS(STD_DELAY));
 
 	// Initialize accelerometer
 	xStatus = xAccelGyroInit();
 	if (pdFAIL == xStatus) {
 		xSendStringByQueue(&printString, printStringQueueHandle, "[accelGyroTask] accelGyro init failed\r\n");
+	} else {
+		xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 	}
 
 	/* Infinite loop */
@@ -1889,7 +1908,25 @@ void eventTaskFunction(void *argument)
 	EventBits_t xEventGroupValue = 0;
 	Data_t oledData = {0};
 
+	// Task synchronization bits
+	EventBits_t uxThisTasksSyncBits = EVENT_HANDLER_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (DIST_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT);
+
+	// Initialize string data
 	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
+
+	// Synchronize task initialization
+	xEventGroupValue = xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
+
+	if (!(xEventGroupValue & CPU_TEMP_INIT_EVENT))
+		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] cpuTempTask not ready!\r\n");
+	if (!(xEventGroupValue & DIST_INIT_EVENT))
+		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] distTask not ready!\r\n");
+	if (!(xEventGroupValue & ACCEL_GYRO_INIT_EVENT))
+		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] accelGyroTask not ready!\r\n");
+	if (!(xEventGroupValue & OLED_INIT_EVENT))
+		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] oledTask not ready!\r\n");
 
   for(;;)
   {
@@ -1960,10 +1997,18 @@ void oledTaskFunction(void *argument)
 	char cText[TEXT_ARRAY] = {0};
 	Data_t printData = {0};
 
+	// Task synchronization bits
+	EventBits_t uxThisTasksSyncBits = OLED_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT | DIST_INIT_EVENT);
+
 	// Initialize screen and start continuous DMA transfer
 	ssd1331_init();
 	HAL_GPIO_WritePin(OLED_CS_GPIO_Port, OLED_CS_Pin, GPIO_PIN_RESET);
 	HAL_SPI_Transmit_DMA(&hspi2, (uint8_t *)screenBuffer, sizeof(screenBuffer));
+
+	// Synchronize task initialization
+	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 
 	// Cycle screen with different colors
   ssd1331_clear_screen(BLACK);
@@ -2080,12 +2125,20 @@ void distTaskFunction(void *argument)
 	uint32_t uiDistance = 0;
 	Data_t oledData = {0};
 
+	// Task synchronization bits
+	EventBits_t uxThisTasksSyncBits = DIST_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT);
+
 	// Setup trigger timer (one pulse PWM)
 	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1);
 	__HAL_TIM_SET_AUTORELOAD(&htim4, xTriggerTicks + 1);
 
 	// Start circular DMA transfer for input capture timer
 	HAL_TIM_IC_Start_DMA(&htim5, TIM_CHANNEL_1, xEchoRead, 2);
+
+	// Synchronize task initialization
+	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 
 	/* Infinite loop */
 	for(;;)

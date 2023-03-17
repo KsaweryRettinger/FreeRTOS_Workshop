@@ -110,9 +110,16 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 
 // Common event bits
-#define BUTTON_EVENT (0x1)
-#define MOTION_INT_EVENT (0x2)
-#define I2C_MEM_READ_EVENT (0x4)
+#define BUTTON_EVENT (0x01)
+#define MOTION_INT_EVENT (0x02)
+#define I2C_MEM_READ_EVENT (0x04)
+
+// Task synchronization (initialization)
+#define EVENT_HANDLER_INIT_EVENT (0x08)
+#define CPU_TEMP_INIT_EVENT (0x10)
+#define ACCEL_GYRO_INIT_EVENT (0x20)
+#define OLED_INIT_EVENT (0x40)
+#define DIST_INIT_EVENT (0x80)
 
 // CPU temperature readings
 #define VDD (3.3)
