@@ -120,6 +120,8 @@ void Error_Handler(void);
 #define ACCEL_GYRO_INIT_EVENT (0x20)
 #define OLED_INIT_EVENT (0x40)
 #define DIST_INIT_EVENT (0x80)
+#define DIST_TRIGGER_INIT_EVENT (0x100)
+#define DIST_ECHO_EVENT (0x200)
 
 // CPU temperature readings
 #define VDD (3.3)

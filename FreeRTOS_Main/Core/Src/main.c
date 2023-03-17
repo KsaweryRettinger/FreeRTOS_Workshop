@@ -173,6 +173,13 @@ const osThreadAttr_t distTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for distTriggerTask */
+osThreadId_t distTriggerTaskHandle;
+const osThreadAttr_t distTriggerTask_attributes = {
+  .name = "distTriggerTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for blinkPeriodQueue */
 osMessageQueueId_t blinkPeriodQueueHandle;
 const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
@@ -284,6 +291,7 @@ void accelGyroTaskFunction(void *argument);
 void eventTaskFunction(void *argument);
 void oledTaskFunction(void *argument);
 void distTaskFunction(void *argument);
+void distTriggerFunction(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -492,6 +500,9 @@ int main(void)
 
   /* creation of distTask */
   distTaskHandle = osThreadNew(distTaskFunction, NULL, &distTask_attributes);
+
+  /* creation of distTriggerTask */
+  distTriggerTaskHandle = osThreadNew(distTriggerFunction, NULL, &distTriggerTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1753,7 +1764,7 @@ void cpuTempTaskFunction(void *argument)
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = CPU_TEMP_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | DIST_INIT_EVENT);
+																 OLED_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Text buffer and string data
 	char cText[OUTPUT_BUFFER_LEN] = {0};
@@ -1828,7 +1839,7 @@ void accelGyroTaskFunction(void *argument)
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = ACCEL_GYRO_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
-																 OLED_INIT_EVENT | DIST_INIT_EVENT);
+																 OLED_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Initialize struct used for printing data
 	vInitPrintStringData(&printString, cText, sizeof(cText), accelGyroPrintSemHandle);
@@ -1910,8 +1921,8 @@ void eventTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = EVENT_HANDLER_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (DIST_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (DIST_INIT_EVENT | ACCEL_GYRO_INIT_EVENT | OLED_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Initialize string data
 	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
@@ -2000,7 +2011,7 @@ void oledTaskFunction(void *argument)
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = OLED_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
-																 ACCEL_GYRO_INIT_EVENT | DIST_INIT_EVENT);
+																 ACCEL_GYRO_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Initialize screen and start continuous DMA transfer
 	ssd1331_init();
@@ -2107,6 +2118,51 @@ void oledTaskFunction(void *argument)
   /* USER CODE END oledTaskFunction */
 }
 
+/* USER CODE BEGIN Header_distTriggerFunction */
+/**
+* @brief Function implementing the distTriggerTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_distTriggerFunction */
+void distTriggerFunction(void *argument)
+{
+  /* USER CODE BEGIN distTriggerFunction */
+
+	uint32_t uiTimerTicksToUs = (SystemCoreClock / 2) / 1000000;
+	uint32_t xTriggerTicks = uiTimerTicksToUs * 20;
+
+	// Task synchronization bits
+	EventBits_t xEventGroupValue = 0;
+	EventBits_t uxThisTasksSyncBits = DIST_TRIGGER_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT);
+
+	// Setup trigger timer (one pulse PWM)
+	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1);
+	__HAL_TIM_SET_AUTORELOAD(&htim4, xTriggerTicks + 1);
+
+	// Synchronize task initialization
+	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
+
+  /* Infinite loop */
+  for(;;)
+  {
+		// Send 20us trigger pulse
+		HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+
+		// Wait for echo
+		xEventGroupValue = xEventGroupWaitBits(commonEventHandle, DIST_ECHO_EVENT, pdTRUE, pdTRUE, pdMS_TO_TICKS(STD_DELAY));
+
+		//Stop timer and add delay between trigger pulses
+		if (xEventGroupValue & DIST_ECHO_EVENT) {
+			HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
+			vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
+		}
+  }
+  /* USER CODE END distTriggerFunction */
+}
+
 /* USER CODE BEGIN Header_distTaskFunction */
 /**
 * @brief Function implementing the distTask thread.
@@ -2120,7 +2176,6 @@ void distTaskFunction(void *argument)
 
 	BaseType_t xNotification = 0;
 	uint32_t uiTimerTicksToUs = (SystemCoreClock / 2) / 1000000;
-	uint32_t xTriggerTicks = uiTimerTicksToUs * 20;
 	uint32_t xEchoRead[2] = {0};
 	uint32_t uiDistance = 0;
 	Data_t oledData = {0};
@@ -2128,11 +2183,7 @@ void distTaskFunction(void *argument)
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = DIST_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT);
-
-	// Setup trigger timer (one pulse PWM)
-	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1);
-	__HAL_TIM_SET_AUTORELOAD(&htim4, xTriggerTicks + 1);
+																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Start circular DMA transfer for input capture timer
 	HAL_TIM_IC_Start_DMA(&htim5, TIM_CHANNEL_1, xEchoRead, 2);
@@ -2143,8 +2194,7 @@ void distTaskFunction(void *argument)
 	/* Infinite loop */
 	for(;;)
 	{
-			// Send 20us trigger pulse and wait for echo notification
-			HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+			// Wait for sensor echo
 			xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(STD_DELAY));
 
 			if (0 != xNotification) {
@@ -2156,13 +2206,10 @@ void distTaskFunction(void *argument)
 				oledData.type = DISTANCE;
 				oledData.value.ui = uiDistance;
 				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+
+				// Set echo received event
+				xEventGroupSetBits(commonEventHandle, DIST_ECHO_EVENT);
 			}
-
-			// Stop trigger timer (API requirement)
-			HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_1);
-
-			// Add delay
-			vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
 	}
 
   /* USER CODE END distTaskFunction */
