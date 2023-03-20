@@ -1248,6 +1248,11 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM5)
 		vTaskNotifyGiveFromISR(distTaskHandle, &xYieldRequired);
 	portYIELD_FROM_ISR(xYieldRequired);
+
+	// Check for echo from distance sensor
+	if (htim->Instance == TIM1)
+		xTaskNotifyFromISR(tempHumTaskHandle, TEMP_HUM_IC_CPLT, eSetBits, &xYieldRequired);
+	portYIELD_FROM_ISR(xYieldRequired);
 }
 
 // Wrapper function for sending data using a stream buffer
@@ -2356,10 +2361,108 @@ void distTriggerFunction(void *argument)
 void tempHumTaskFunction(void *argument)
 {
   /* USER CODE BEGIN tempHumTaskFunction */
-  /* Infinite loop */
+
+	// Status variables
+	BaseType_t xStatus = pdFALSE;
+	uint32_t xNotification = 0;
+
+	// Data printing and display
+	char cText[OUTPUT_BUFFER_LEN] = {0};
+	StringData_t printString = {0};
+	Data_t oledData = {0};
+
+	// Task priority
+	UBaseType_t uxTaskPriority = uxTaskPriorityGet(NULL);
+
+	// GPIO reconfiguration structure
+	GPIO_InitTypeDef GPIO_InitStructure = {0};
+
+	// Data capture
+	uint32_t xCounterValueForBit = 0;
+	uint16_t sInputRead[42] = {0};
+	uint8_t cSensorData[5] = {0};
+
+	// Results
+	uint8_t cChecksum = 0;
+	uint16_t sRawTemperature = 0;
+	uint16_t sRawHumidity = 0;
+	float fTemperature = 0.0f;
+	float fHumidity = 0.0f;
+
+	// Initialize string data
+	vInitPrintStringData(&printString, cText, sizeof(cText), tempHumPrintSemHandle);
+
+	// GPIO reconfiguration settings
+	GPIO_InitStructure.Alternate = GPIO_AF1_TIM1;
+	GPIO_InitStructure.Pin = TEMP_HUM_SENS_Pin;
+	GPIO_InitStructure.Pull = GPIO_NOPULL;
+	GPIO_InitStructure.Speed = GPIO_SPEED_HIGH;
+
+	// 100us timer counter value
+	xCounterValueForBit = ((SystemCoreClock / 100000) / TIM1->PSC) * 100;
+
   for(;;)
   {
-    osDelay(1);
+  	// Set pin to standard output mode
+  	GPIO_InitStructure.Mode = GPIO_MODE_OUTPUT_OD;
+  	HAL_GPIO_Init(TEMP_HUM_SENS_GPIO_Port, &GPIO_InitStructure);
+
+  	// Increase task priority to ensure that all incoming data is captured
+  	vTaskPrioritySet(NULL, uxTaskPriority + 1);
+
+  	// Trigger sensor with 1ms low pulse
+  	HAL_GPIO_WritePin(TEMP_HUM_SENS_GPIO_Port, TEMP_HUM_SENS_Pin, GPIO_PIN_RESET);
+  	vTaskDelay(pdMS_TO_TICKS(1));
+  	HAL_GPIO_WritePin(TEMP_HUM_SENS_GPIO_Port, TEMP_HUM_SENS_Pin, GPIO_PIN_SET);
+
+  	// Set GPIO to input capture mode
+  	GPIO_InitStructure.Mode = GPIO_MODE_AF_OD;
+  	HAL_GPIO_Init(TEMP_HUM_SENS_GPIO_Port, &GPIO_InitStructure);
+
+  	// Reset timer to 0
+  	__HAL_TIM_SetCounter(&htim1, 0);
+
+  	// Capture time between 42 falling edges
+  	HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_1, (uint32_t *)sInputRead, 42);
+
+  	// Reset to original task priority
+  	vTaskPrioritySet(NULL, uxTaskPriority);
+
+  	// Wait for all data
+  	xStatus = xTaskNotifyWait(0xffffffff, 0xffffffff, &xNotification, pdMS_TO_TICKS(6));
+
+  	if (pdTRUE == xStatus && (xNotification == TEMP_HUM_IC_CPLT)) {
+
+  		// Save incoming data (MSB first) and check timer readings
+  		for (int i = 2, j = 0; i < 42; i++, j++) {
+  			cSensorData[j / 8] <<= 1;
+  			cSensorData[j / 8] |= ((sInputRead[i] - sInputRead[i - 1]) > xCounterValueForBit) ? 1 : 0;
+  		}
+
+  		// Received checksum shoud be the summation of the first 4 bytes
+  		cChecksum = (cSensorData[0] + cSensorData[1] + cSensorData[2] + cSensorData[3]);
+  		if (cChecksum != cSensorData[4])
+  			xSendStringByQueue(&printString, printStringQueueHandle, "[tempHumTask] Wrong checksum!\r\n");
+
+  		// Calculate temperature and humidity
+  		sRawHumidity = (uint16_t)(cSensorData[0] << 8) | cSensorData[1];
+  		sRawTemperature = (uint16_t)(cSensorData[2] << 8) | cSensorData[3];
+  		fHumidity = sRawHumidity / 10.0;
+  		fTemperature = sRawTemperature / 10.0;
+
+  		// Send data to OLED task
+  		oledData.type = TEMPERATURE;
+  		oledData.value.f = fTemperature;
+  		xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(50));
+
+  		oledData.type = HUMIDITY;
+  		oledData.value.f = fHumidity;
+  		xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(50));
+  	}
+
+  	// Stop input capture and delay next reading by 500ms
+  	HAL_TIM_IC_Stop_DMA(&htim1, TIM_CHANNEL_1);
+  	vTaskDelay(pdMS_TO_TICKS(500));
   }
   /* USER CODE END tempHumTaskFunction */
 }
