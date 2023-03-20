@@ -2399,7 +2399,7 @@ void tempHumTaskFunction(void *argument)
 	GPIO_InitStructure.Speed = GPIO_SPEED_HIGH;
 
 	// 100us timer counter value
-	xCounterValueForBit = ((SystemCoreClock / 100000) / TIM1->PSC) * 100;
+	xCounterValueForBit = ((SystemCoreClock / 1000000) / TIM1->PSC) * 100;
 
   for(;;)
   {
