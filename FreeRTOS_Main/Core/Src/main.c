@@ -217,6 +217,11 @@ osMessageQueueId_t oledDataQueueHandle;
 const osMessageQueueAttr_t oledDataQueue_attributes = {
   .name = "oledDataQueue"
 };
+/* Definitions for tempHumTim */
+osTimerId_t tempHumTimHandle;
+const osTimerAttr_t tempHumTim_attributes = {
+  .name = "tempHumTim"
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -311,6 +316,7 @@ void oledTaskFunction(void *argument);
 void distTaskFunction(void *argument);
 void distTriggerFunction(void *argument);
 void tempHumTaskFunction(void *argument);
+void tempHumTimCallback(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -468,6 +474,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
+
+  /* Create the timer(s) */
+  /* creation of tempHumTim */
+  tempHumTimHandle = osTimerNew(tempHumTimCallback, osTimerPeriodic, NULL, &tempHumTim_attributes);
 
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
@@ -2401,8 +2411,15 @@ void tempHumTaskFunction(void *argument)
 	// 100us timer counter value
 	xCounterValueForBit = ((SystemCoreClock / 1000000) / TIM1->PSC) * 100;
 
+	xStatus = xTimerChangePeriod(tempHumTimHandle, pdMS_TO_TICKS(500), pdMS_TO_TICKS(100));
+	if (pdFAIL == xStatus)
+		xSendStringByQueue(&printString, printStringQueueHandle, "tempHumTask: timer change period failed\r\n");
+
   for(;;)
   {
+  	// Suspend task and wait for periodic timer
+  	vTaskSuspend(NULL);
+
   	// Set pin to standard output mode
   	GPIO_InitStructure.Mode = GPIO_MODE_OUTPUT_OD;
   	HAL_GPIO_Init(TEMP_HUM_SENS_GPIO_Port, &GPIO_InitStructure);
@@ -2460,11 +2477,18 @@ void tempHumTaskFunction(void *argument)
   		xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(50));
   	}
 
-  	// Stop input capture and delay next reading by 500ms
+  	// Stop input capture
   	HAL_TIM_IC_Stop_DMA(&htim1, TIM_CHANNEL_1);
-  	vTaskDelay(pdMS_TO_TICKS(500));
   }
   /* USER CODE END tempHumTaskFunction */
+}
+
+/* tempHumTimCallback function */
+void tempHumTimCallback(void *argument)
+{
+  /* USER CODE BEGIN tempHumTimCallback */
+	vTaskResume(tempHumTaskHandle);
+  /* USER CODE END tempHumTimCallback */
 }
 
 /**
