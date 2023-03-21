@@ -168,7 +168,7 @@ const osThreadAttr_t eventTask_attributes = {
 osThreadId_t oledTaskHandle;
 const osThreadAttr_t oledTask_attributes = {
   .name = "oledTask",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for distTask */
@@ -392,7 +392,7 @@ const CLI_Command_Definition_t xResetCommand = {.pcCommand = "reset",
 																								.pxCommandInterpreter = prvResetCommand,
 																								.cExpectedNumberOfParameters = 0 };
 const CLI_Command_Definition_t xOledPeriodCommand = {.pcCommand = "oledperiod",
-																								.pcHelpString = "oledperiod:\r\n Set oled screensaver timeout in s: oledperiod <time>\r\n",
+																								.pcHelpString = "oledperiod:\r\n Set oled timeout in ms: oledperiod <time>\r\n",
 																								.pxCommandInterpreter = prvOledPeriodCommand,
 																								.cExpectedNumberOfParameters = 1 };
 
@@ -1518,12 +1518,12 @@ BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 			strncpy(pcWriteBuffer, "[cli] OLED task is already running\r\n", xWriteBufferLen);
 		}
 
-		// Disable screensaver timeout
+		// Stop one-shot timer
 		if (pdTRUE == xTimerIsTimerActive(oledTimHandle)) {
 			if (xTimerStop(oledTimHandle, 0))
-				strncat(pcWriteBuffer,  "[cli] OLED screensaver disabled\r\n", xWriteBufferLen - strlen(pcWriteBuffer));
+				strncat(pcWriteBuffer,  "[cli] OLED timeout disabled\r\n", xWriteBufferLen - strlen(pcWriteBuffer));
 			else
-				strncat(pcWriteBuffer,  "[cli] Failed to disable OLED screensaver\r\n", xWriteBufferLen - strlen(pcWriteBuffer));
+				strncat(pcWriteBuffer,  "[cli] Failed to disable OLED timeout\r\n", xWriteBufferLen - strlen(pcWriteBuffer));
 		}
 	} else if (0 == strncmp(pcParameter1, "off", xParameter1StringLength)) {
 
@@ -1557,7 +1557,7 @@ BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, con
 	BaseType_t xParameter1StringLength = 0;
 	const char *pcParameter1 = NULL;
 
-	// Get first parameter - OLED screensaver timeout in seconds
+	// Get first parameter - OLED timeout in seconds
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
 
 	// Convert to integer and set new timer period
@@ -1565,9 +1565,9 @@ BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, con
 	xStatus = xTimerChangePeriod(oledTimHandle, xOledPeriod, 0);
 
 	if (pdPASS == xStatus)
-		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED screensaver timeout to: %lus\r\n", xOledPeriod);
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED timeout to: %lu ms\r\n", xOledPeriod);
 	else
-		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED screensaver timeout failed\r\n");
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED timeout failed\r\n");
 
 	return pdFALSE;
 }
@@ -2178,16 +2178,16 @@ void eventTaskFunction(void *argument)
     // Button event
     if (xEventGroupValue & BUTTON_EVENT) {
 
-    	// Check if OLED task is suspended
+    	// Resume OLED task if suspended
   		if (eSuspended == eTaskGetState(oledTaskHandle)) {
   			vTaskResume(oledTaskHandle);
   			xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Resuming OLED task\r\n");
   		}
 
-  		// Start OLED screensaver timeout
+  		// Restart OLED timer
   		if (xTimerStart(oledTimHandle, pdMS_TO_TICKS(100)))
   			xSendStringByQueue(&printString, printStringQueueHandle, \
-  					"[eventTask] Enabled OLED screen timeout, period: %lus\r\n", xTimerGetPeriod(oledTimHandle));
+  					"[eventTask] Enabled OLED screen timeout, period: %lu ms\r\n", xTimerGetPeriod(oledTimHandle));
   		else
   			xSendStringByQueue(&printString, printStringQueueHandle, \
   					"[eventTask] Unable to set OLED screen timeout\r\n");
