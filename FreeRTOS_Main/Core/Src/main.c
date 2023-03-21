@@ -222,6 +222,11 @@ osTimerId_t tempHumTimHandle;
 const osTimerAttr_t tempHumTim_attributes = {
   .name = "tempHumTim"
 };
+/* Definitions for oledTim */
+osTimerId_t oledTimHandle;
+const osTimerAttr_t oledTim_attributes = {
+  .name = "oledTim"
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -317,6 +322,7 @@ void distTaskFunction(void *argument);
 void distTriggerFunction(void *argument);
 void tempHumTaskFunction(void *argument);
 void tempHumTimCallback(void *argument);
+void oledTimCallback(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -334,6 +340,7 @@ BaseType_t prvCpuTempCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const 
 BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvResetCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 // Utility functions for sending strings via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
@@ -379,6 +386,10 @@ const CLI_Command_Definition_t xResetCommand = {.pcCommand = "reset",
 																								.pcHelpString = "reset:\r\n Reset nucleo device\r\n",
 																								.pxCommandInterpreter = prvResetCommand,
 																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xOledPeriodCommand = {.pcCommand = "oledperiod",
+																								.pcHelpString = "oledperiod:\r\n Set oled screensaver timeout in s: oledperiod <time>\r\n",
+																								.pxCommandInterpreter = prvOledPeriodCommand,
+																								.cExpectedNumberOfParameters = 1 };
 
 /* USER CODE END 0 */
 
@@ -407,6 +418,7 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xPitchRollCommand);
   FreeRTOS_CLIRegisterCommand(&xOledCommand);
   FreeRTOS_CLIRegisterCommand(&xResetCommand);
+  FreeRTOS_CLIRegisterCommand(&xOledPeriodCommand);
 
   /* USER CODE END Init */
 
@@ -478,6 +490,9 @@ int main(void)
   /* Create the timer(s) */
   /* creation of tempHumTim */
   tempHumTimHandle = osTimerNew(tempHumTimCallback, osTimerPeriodic, NULL, &tempHumTim_attributes);
+
+  /* creation of oledTim */
+  oledTimHandle = osTimerNew(oledTimCallback, osTimerOnce, NULL, &oledTim_attributes);
 
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
@@ -1486,13 +1501,28 @@ BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
 
 	if (0 == strncmp(pcParameter1, "on", xParameter1StringLength)) {
+
+		//Resume task
 		strncpy(pcWriteBuffer, "[cli] Resuming oled task\r\n", xWriteBufferLen);
 		vTaskResume(oledTaskHandle);
+
+		// Check if screensaver timeout is set
+		if (pdTRUE == xTimerIsTimerActive(oledTimHandle)) {
+			if (xTimerStop(oledTimHandle, 0))
+				strncat(pcWriteBuffer,  "[cli] OLED screensaver disabled\r\n", xWriteBufferLen - strlen(pcWriteBuffer));
+			else
+				strncat(pcWriteBuffer,  "[cli] Failed to disable OLED screensaver\r\n", xWriteBufferLen - strlen(pcWriteBuffer));
+		}
 	} else if (0 == strncmp(pcParameter1, "off", xParameter1StringLength)) {
+
+		//Suspend task
 		strncpy(pcWriteBuffer, "[cli] Suspending oled task\r\n", xWriteBufferLen);
 		vTaskSuspend(oledTaskHandle);
 		memset(screenBuffer, 0x0, sizeof(screenBuffer));
+
 	} else {
+
+		//Invalid command
 		strncpy(pcWriteBuffer, "[cli] Invalid command\r\nsyntax: oled [on|off]\r\n", xWriteBufferLen);
 	}
 
@@ -1501,6 +1531,28 @@ BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 
 BaseType_t prvResetCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 	HAL_NVIC_SystemReset();
+	return pdFALSE;
+}
+
+BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	BaseType_t xStatus = pdFALSE;
+	TickType_t xOledPeriod = {0};
+	BaseType_t xParameter1StringLength = 0;
+	const char *pcParameter1 = NULL;
+
+	// Get first parameter - OLED screensaver timeout in seconds
+	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
+
+	// Convert to integer and set new timer period
+	xOledPeriod = (TickType_t)atoi(pcParameter1);
+	xStatus = xTimerChangePeriod(oledTimHandle, xOledPeriod, 0);
+
+	if (pdPASS == xStatus)
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED screensaver timeout to: %lus\r\n", xOledPeriod);
+	else
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED screensaver timeout failed\r\n");
+
 	return pdFALSE;
 }
 
@@ -2489,6 +2541,14 @@ void tempHumTimCallback(void *argument)
   /* USER CODE BEGIN tempHumTimCallback */
 	vTaskResume(tempHumTaskHandle);
   /* USER CODE END tempHumTimCallback */
+}
+
+/* oledTimCallback function */
+void oledTimCallback(void *argument)
+{
+  /* USER CODE BEGIN oledTimCallback */
+
+  /* USER CODE END oledTimCallback */
 }
 
 /**
