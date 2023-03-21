@@ -267,6 +267,11 @@ osSemaphoreId_t tempHumPrintSemHandle;
 const osSemaphoreAttr_t tempHumPrintSem_attributes = {
   .name = "tempHumPrintSem"
 };
+/* Definitions for oledPrintSem */
+osSemaphoreId_t oledPrintSemHandle;
+const osSemaphoreAttr_t oledPrintSem_attributes = {
+  .name = "oledPrintSem"
+};
 /* Definitions for commonEvent */
 osEventFlagsId_t commonEventHandle;
 const osEventFlagsAttr_t commonEvent_attributes = {
@@ -482,6 +487,9 @@ int main(void)
 
   /* creation of tempHumPrintSem */
   tempHumPrintSemHandle = osSemaphoreNew(1, 1, &tempHumPrintSem_attributes);
+
+  /* creation of oledPrintSem */
+  oledPrintSemHandle = osSemaphoreNew(1, 1, &oledPrintSem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -1503,10 +1511,14 @@ BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 	if (0 == strncmp(pcParameter1, "on", xParameter1StringLength)) {
 
 		//Resume task
-		strncpy(pcWriteBuffer, "[cli] Resuming oled task\r\n", xWriteBufferLen);
-		vTaskResume(oledTaskHandle);
+		if (eSuspended == eTaskGetState(oledTaskHandle)) {
+			strncpy(pcWriteBuffer, "[cli] Resuming OLED task\r\n", xWriteBufferLen);
+			vTaskResume(oledTaskHandle);
+		} else {
+			strncpy(pcWriteBuffer, "[cli] OLED task is already running\r\n", xWriteBufferLen);
+		}
 
-		// Check if screensaver timeout is set
+		// Disable screensaver timeout
 		if (pdTRUE == xTimerIsTimerActive(oledTimHandle)) {
 			if (xTimerStop(oledTimHandle, 0))
 				strncat(pcWriteBuffer,  "[cli] OLED screensaver disabled\r\n", xWriteBufferLen - strlen(pcWriteBuffer));
@@ -1516,9 +1528,13 @@ BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 	} else if (0 == strncmp(pcParameter1, "off", xParameter1StringLength)) {
 
 		//Suspend task
-		strncpy(pcWriteBuffer, "[cli] Suspending oled task\r\n", xWriteBufferLen);
-		vTaskSuspend(oledTaskHandle);
-		memset(screenBuffer, 0x0, sizeof(screenBuffer));
+		if (eSuspended != eTaskGetState(oledTaskHandle)) {
+			strncpy(pcWriteBuffer, "[cli] Suspending OLED task\r\n", xWriteBufferLen);
+			vTaskSuspend(oledTaskHandle);
+			memset(screenBuffer, 0x0, sizeof(screenBuffer));
+		} else {
+			strncpy(pcWriteBuffer, "[cli] OLED task is already suspended\r\n", xWriteBufferLen);
+		}
 
 	} else {
 
@@ -2162,17 +2178,19 @@ void eventTaskFunction(void *argument)
     // Button event
     if (xEventGroupValue & BUTTON_EVENT) {
 
-   		// Suspend/resume LED task and send message to terminal
-   		if (eTaskGetState(ledTaskHandle) != eSuspended) {
-   			vTaskSuspend(ledTaskHandle);
-   			xSendStringByQueue(&printString, printStringQueueHandle, "[buttonTask] LED blink task suspended\r\n");
-   		} else {
-   			vTaskResume(ledTaskHandle);
-   			xSendStringByQueue(&printString, printStringQueueHandle, "[buttonTask] LED blink task resumed\r\n");
-   		}
+    	// Check if OLED task is suspended
+  		if (eSuspended == eTaskGetState(oledTaskHandle)) {
+  			vTaskResume(oledTaskHandle);
+  			xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Resuming OLED task\r\n");
+  		}
 
-   		// Add delay to minimize noise from button
-   		vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
+  		// Start OLED screensaver timeout
+  		if (xTimerStart(oledTimHandle, pdMS_TO_TICKS(100)))
+  			xSendStringByQueue(&printString, printStringQueueHandle, \
+  					"[eventTask] Enabled OLED screen timeout, period: %lus\r\n", xTimerGetPeriod(oledTimHandle));
+  		else
+  			xSendStringByQueue(&printString, printStringQueueHandle, \
+  					"[eventTask] Unable to set OLED screen timeout\r\n");
     }
   }
   /* USER CODE END eventTaskFunction */
@@ -2190,12 +2208,17 @@ void oledTaskFunction(void *argument)
   /* USER CODE BEGIN oledTaskFunction */
 	BaseType_t xStatus = pdFALSE;
 	char cText[TEXT_ARRAY] = {0};
+	char cPrintText[OUTPUT_BUFFER_LEN] = {0};
+	StringData_t printString = {0};
 	Data_t printData = {0};
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = OLED_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
 																 ACCEL_GYRO_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+
+	// Initialize string data
+	vInitPrintStringData(&printString, cPrintText, sizeof(cPrintText), oledPrintSemHandle);
 
 	// Initialize screen and start continuous DMA transfer
 	ssd1331_init();
@@ -2226,6 +2249,10 @@ void oledTaskFunction(void *argument)
 	// Clear screen
   ssd1331_clear_screen(BLACK);
 	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+
+	xStatus = xTimerChangePeriod(oledTimHandle, pdMS_TO_TICKS(10000), pdMS_TO_TICKS(100));
+	if (pdFAIL == xStatus)
+		xSendStringByQueue(&printString, printStringQueueHandle, "[oledTask] Unable to set OLED screen timeout\r\n");
 
 	/* Infinite loop */
   for(;;)
@@ -2547,7 +2574,8 @@ void tempHumTimCallback(void *argument)
 void oledTimCallback(void *argument)
 {
   /* USER CODE BEGIN oledTimCallback */
-
+	vTaskSuspend(oledTaskHandle);
+	memset(screenBuffer, 0x0, sizeof(screenBuffer));
   /* USER CODE END oledTimCallback */
 }
 
