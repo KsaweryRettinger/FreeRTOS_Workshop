@@ -128,10 +128,10 @@ const osThreadAttr_t cliTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for cliPrintTask */
-osThreadId_t cliPrintTaskHandle;
-const osThreadAttr_t cliPrintTask_attributes = {
-  .name = "cliPrintTask",
+/* Definitions for streamPrintTask */
+osThreadId_t streamPrintTaskHandle;
+const osThreadAttr_t streamPrintTask_attributes = {
+  .name = "streamPrintTask",
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
@@ -233,6 +233,11 @@ osTimerId_t oledTimHandle;
 const osTimerAttr_t oledTim_attributes = {
   .name = "oledTim"
 };
+/* Definitions for printStringMutex */
+osMutexId_t printStringMutexHandle;
+const osMutexAttr_t printStringMutex_attributes = {
+  .name = "printStringMutex"
+};
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
@@ -242,11 +247,6 @@ const osSemaphoreAttr_t uart2TxSem_attributes = {
 osSemaphoreId_t uart2RxSemHandle;
 const osSemaphoreAttr_t uart2RxSem_attributes = {
   .name = "uart2RxSem"
-};
-/* Definitions for cpuTempPrintSem */
-osSemaphoreId_t cpuTempPrintSemHandle;
-const osSemaphoreAttr_t cpuTempPrintSem_attributes = {
-  .name = "cpuTempPrintSem"
 };
 /* Definitions for adc1Sem */
 osSemaphoreId_t adc1SemHandle;
@@ -258,25 +258,10 @@ osSemaphoreId_t accelGyroSemHandle;
 const osSemaphoreAttr_t accelGyroSem_attributes = {
   .name = "accelGyroSem"
 };
-/* Definitions for accelGyroPrintSem */
-osSemaphoreId_t accelGyroPrintSemHandle;
-const osSemaphoreAttr_t accelGyroPrintSem_attributes = {
-  .name = "accelGyroPrintSem"
-};
 /* Definitions for eventPrintSem */
 osSemaphoreId_t eventPrintSemHandle;
 const osSemaphoreAttr_t eventPrintSem_attributes = {
   .name = "eventPrintSem"
-};
-/* Definitions for tempHumPrintSem */
-osSemaphoreId_t tempHumPrintSemHandle;
-const osSemaphoreAttr_t tempHumPrintSem_attributes = {
-  .name = "tempHumPrintSem"
-};
-/* Definitions for oledPrintSem */
-osSemaphoreId_t oledPrintSemHandle;
-const osSemaphoreAttr_t oledPrintSem_attributes = {
-  .name = "oledPrintSem"
 };
 /* Definitions for commonEvent */
 osEventFlagsId_t commonEventHandle;
@@ -285,8 +270,8 @@ const osEventFlagsAttr_t commonEvent_attributes = {
 };
 /* USER CODE BEGIN PV */
 
-// Stream buffer for passing messages between CLI tasks
-StreamBufferHandle_t xStreamBufferCli = NULL;
+// Stream buffer for passing messages to CLI print task
+StreamBufferHandle_t xStreamBufferString = NULL;
 
 // Array for storing jostick ADC readings
 uint16_t sAdc2Read[2] = {0};
@@ -322,7 +307,7 @@ static void MX_TIM5_Init(void);
 static void MX_TIM1_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
-void cliPrintTaskFunction(void *argument);
+void streamPrintTaskFunction(void *argument);
 void ledTaskFunction(void *argument);
 void printTaskFunction(void *argument);
 void cpuTempTaskFunction(void *argument);
@@ -338,7 +323,8 @@ void oledTimCallback(void *argument);
 /* USER CODE BEGIN PFP */
 
 // Wrapper for writing to the CLI stream buffer
-static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
+static inline BaseType_t xSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
+																						 SemaphoreHandle_t printStringMutex,
 																						 const void *pvTxData,
 																						 size_t xDataLengthBytes,
 																						 TickType_t xTicksToWait);
@@ -454,8 +440,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
-  xStreamBufferCli = xStreamBufferCreate(OUTPUT_BUFFER_LEN, 1);
-  xStreamBufferReset(xStreamBufferCli);
+  xStreamBufferString = xStreamBufferCreate(OUTPUT_BUFFER_LEN, 1);
+  xStreamBufferReset(xStreamBufferString);
 
   // Start continuous ADC conversions for joystick
   // HAL_ADC_Start_DMA(&hadc2, (uint32_t *)&sAdc2Read[0], 2);
@@ -464,6 +450,9 @@ int main(void)
 
   /* Init scheduler */
   osKernelInitialize();
+  /* Create the mutex(es) */
+  /* creation of printStringMutex */
+  printStringMutexHandle = osMutexNew(&printStringMutex_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -476,26 +465,14 @@ int main(void)
   /* creation of uart2RxSem */
   uart2RxSemHandle = osSemaphoreNew(1, 1, &uart2RxSem_attributes);
 
-  /* creation of cpuTempPrintSem */
-  cpuTempPrintSemHandle = osSemaphoreNew(1, 1, &cpuTempPrintSem_attributes);
-
   /* creation of adc1Sem */
   adc1SemHandle = osSemaphoreNew(1, 1, &adc1Sem_attributes);
 
   /* creation of accelGyroSem */
   accelGyroSemHandle = osSemaphoreNew(1, 1, &accelGyroSem_attributes);
 
-  /* creation of accelGyroPrintSem */
-  accelGyroPrintSemHandle = osSemaphoreNew(1, 1, &accelGyroPrintSem_attributes);
-
   /* creation of eventPrintSem */
   eventPrintSemHandle = osSemaphoreNew(1, 1, &eventPrintSem_attributes);
-
-  /* creation of tempHumPrintSem */
-  tempHumPrintSemHandle = osSemaphoreNew(1, 1, &tempHumPrintSem_attributes);
-
-  /* creation of oledPrintSem */
-  oledPrintSemHandle = osSemaphoreNew(1, 1, &oledPrintSem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -539,8 +516,8 @@ int main(void)
   /* creation of cliTask */
   cliTaskHandle = osThreadNew(cliTaskFunction, NULL, &cliTask_attributes);
 
-  /* creation of cliPrintTask */
-  cliPrintTaskHandle = osThreadNew(cliPrintTaskFunction, NULL, &cliPrintTask_attributes);
+  /* creation of streamPrintTask */
+  streamPrintTaskHandle = osThreadNew(streamPrintTaskFunction, NULL, &streamPrintTask_attributes);
 
   /* creation of ledTask */
   ledTaskHandle = osThreadNew(ledTaskFunction, NULL, &ledTask_attributes);
@@ -573,7 +550,6 @@ int main(void)
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
-  /* Create the event(s) */
   /* creation of commonEvent */
   commonEventHandle = osEventFlagsNew(&commonEvent_attributes);
 
@@ -1295,24 +1271,38 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 }
 
 // Wrapper function for sending data using a stream buffer
-static inline void vSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
+static inline BaseType_t xSendStringByStreamBuffer(StreamBufferHandle_t xStreamBuffer,
+																						 SemaphoreHandle_t printStringMutex,
 																						 const void *pvTxData,
 																						 size_t xDataLengthBytes,
 																						 TickType_t xTicksToWait) {
 	size_t xBytesToSend = xDataLengthBytes;
 	size_t xBytesSent = 0;
+	BaseType_t xStatus = pdFALSE;
 
-	do {
+	if (0 == xDataLengthBytes)
+		xDataLengthBytes = strlen(pvTxData);
 
-		// Try to send all bytes
-		xBytesSent += xStreamBufferSend(xStreamBuffer, pvTxData + xBytesSent, xBytesToSend, xTicksToWait);
+	// Take mutex
+	xStatus = xSemaphoreTake(printStringMutex, xTicksToWait);
 
-		// Decrement bytes to send by number of bytes already sent
-		if (xBytesSent != xDataLengthBytes) {
-			xBytesToSend = xDataLengthBytes - xBytesSent;
-		}
+	//  Send string
+	if (pdPASS == xStatus) {
+		do {
+			xBytesSent += xStreamBufferSend(xStreamBuffer, pvTxData + xBytesSent, xBytesToSend, xTicksToWait);
+			if (xBytesSent != xDataLengthBytes) {
+				xBytesToSend = xDataLengthBytes - xBytesSent;
+			}
+		} while (xBytesSent != xDataLengthBytes);
 
-	} while (xBytesSent != xDataLengthBytes);
+		// Release mutex
+		xStatus = xSemaphoreGive(printStringMutex);
+
+		// Yield to same or lower priority task
+		taskYIELD();
+	}
+
+	return xStatus;
 }
 
 static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size) {
@@ -1571,7 +1561,7 @@ BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, con
 	xStatus = xTimerChangePeriod(oledTimHandle, xOledPeriod, 0);
 
 	if (pdPASS == xStatus)
-		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED timeout to: %lu ms\r\n", xOledPeriod);
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED timeout to %lu ms\r\n", xOledPeriod);
 	else
 		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED timeout failed\r\n");
 
@@ -1653,8 +1643,8 @@ void cliTaskFunction(void *argument)
 	HAL_UART_Receive_DMA(&huart2, (uint8_t*)&cRxChar, 1);
 
 	// Send new-page character and welcome message to cliPrintTask
-	vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(SHORT_DELAY));
-	vSendStringByStreamBuffer(xStreamBufferCli, cWelcomeMessage, strlen(cWelcomeMessage), pdMS_TO_TICKS(SHORT_DELAY));
+	xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, &cTxChar, 1, pdMS_TO_TICKS(SHORT_DELAY));
+	xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, cWelcomeMessage, strlen(cWelcomeMessage), pdMS_TO_TICKS(SHORT_DELAY));
 
 	for(;;)
   {
@@ -1670,7 +1660,7 @@ void cliTaskFunction(void *argument)
 			if (cTxChar == '\r' || cTxChar == '\n')
 			{
 				// Newline received, echo carriage return and newline
-				vSendStringByStreamBuffer(xStreamBufferCli, "\r\n", strlen("\r\n"), pdMS_TO_TICKS(STD_DELAY));
+				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "\r\n", strlen("\r\n"), pdMS_TO_TICKS(STD_DELAY));
 
 				// Check input buffer
 				if (cInputBufferIndex > 0)
@@ -1684,7 +1674,11 @@ void cliTaskFunction(void *argument)
 						if (cOutputBuffer[0] != '\0')
 						{
 							// Send command output to the terminal and clear output buffer
-							vSendStringByStreamBuffer(xStreamBufferCli, cOutputBuffer, strnlen(cOutputBuffer, OUTPUT_BUFFER_LEN), pdMS_TO_TICKS(STD_DELAY));
+							xSendStringByStreamBuffer(xStreamBufferString,
+																				printStringMutexHandle,
+																				cOutputBuffer,
+																				strnlen(cOutputBuffer, OUTPUT_BUFFER_LEN),
+																				pdMS_TO_TICKS(STD_DELAY));
 							memset(cOutputBuffer, '\0', OUTPUT_BUFFER_LEN);
 						}
 					}
@@ -1699,13 +1693,13 @@ void cliTaskFunction(void *argument)
 			{
 				// 'Delete' character received, remove from input buffer
 				cInputBuffer[--cInputBufferIndex] = '\0';
-				vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
+				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
 			}
 			else if (cInputBufferIndex < INPUT_BUFFER_LEN)
 			{
 				// Save new character and echo to terminal
 				cInputBuffer[cInputBufferIndex++] = cTxChar;
-				vSendStringByStreamBuffer(xStreamBufferCli, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
+				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, &cTxChar, 1, pdMS_TO_TICKS(STD_DELAY));
 			}
 		}
 		else
@@ -1719,16 +1713,16 @@ void cliTaskFunction(void *argument)
   /* USER CODE END cliTaskFunction */
 }
 
-/* USER CODE BEGIN Header_cliPrintTaskFunction */
+/* USER CODE BEGIN Header_streamPrintTaskFunction */
 /**
-* @brief Function implementing the cliPrintTask thread.
+* @brief Function implementing the streamPrintTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_cliPrintTaskFunction */
-void cliPrintTaskFunction(void *argument)
+/* USER CODE END Header_streamPrintTaskFunction */
+void streamPrintTaskFunction(void *argument)
 {
-  /* USER CODE BEGIN cliPrintTaskFunction */
+  /* USER CODE BEGIN streamPrintTaskFunction */
 
 	BaseType_t xStatus = pdFALSE;
 	size_t xReceiveSize = 0;
@@ -1737,36 +1731,37 @@ void cliPrintTaskFunction(void *argument)
 	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
 	HAL_StatusTypeDef halStatus = HAL_OK;
 
-  for(;;)
-  {
-  	// Read stream buffer
-  	xReceiveSize = xStreamBufferReceive(xStreamBufferCli, cReceiveBuffer, OUTPUT_BUFFER_LEN, portMAX_DELAY);
+	for(;;)
+	{
+		// Read stream buffer
+		xReceiveSize = xStreamBufferReceive(xStreamBufferString, cReceiveBuffer, OUTPUT_BUFFER_LEN, portMAX_DELAY);
 
-  	if (xReceiveSize > 0) {
+		if (xReceiveSize > 0) {
 
-    	// Wait for previous transmission to complete and take Tx semaphore
-    	xStatus = xSemaphoreTake(uart2TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+			// Wait for previous transmission to complete and take Tx semaphore
+			xStatus = xSemaphoreTake(uart2TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
 
-    	// Transmit bytes read from the stream buffer
-    	if (pdTRUE == xStatus)
-    	{
-    		memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
-    		halStatus = HAL_UART_Transmit_DMA(&huart2, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
+			// Transmit bytes read from the stream buffer
+			if (pdTRUE == xStatus)
+			{
+				memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
+				halStatus = HAL_UART_Transmit_DMA(&huart2, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
 
-    		// Ensure that API call was successful
-    		if (halStatus != HAL_OK)
-    			xSemaphoreGive(uart2TxSemHandle);
-    	}
-    	else
-    	{
+				// Ensure that API call was successful
+				if (halStatus != HAL_OK)
+					xSemaphoreGive(uart2TxSemHandle);
+			}
+			else
+			{
 				// Check USART state and call generic error handler in case of errors
 				uartState = HAL_UART_GetState(&huart2);
 				if (HAL_UART_STATE_ERROR == uartState)
 					Error_Handler();
-    	}
-  	}
-  }
-  /* USER CODE END cliPrintTaskFunction */
+			}
+		}
+	}
+
+  /* USER CODE END streamPrintTaskFunction */
 }
 
 /* USER CODE BEGIN Header_ledTaskFunction */
@@ -1952,11 +1947,7 @@ void cpuTempTaskFunction(void *argument)
 
 	// Text buffer and string data
 	char cText[OUTPUT_BUFFER_LEN] = {0};
-	StringData_t printString = {0};
 	Data_t oledData = {0};
-
-	// Initialize string data
-	vInitPrintStringData(&printString, cText, sizeof(cText), cpuTempPrintSemHandle);
 
 	// Synchronize task initialization
 	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
@@ -1980,7 +1971,8 @@ void cpuTempTaskFunction(void *argument)
 				fCpuTemp = ((fVAtTemp30 - fVTempSens) / fVTempSenSlope) + TEMP_30;
 
 				// Send to terminal
-				xSendStringByQueue(&printString, printStringQueueHandle, "[cpuTempTask] CPU temperature: %.2fC\r\n", fCpuTemp);
+				snprintf(cText, sizeof(cText), "[cpuTempTask] CPU temperature: %.2fC\r\n", fCpuTemp);
+				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, cText, strnlen(cText, sizeof(cText)), pdMS_TO_TICKS(STD_DELAY));
 
 				// Send to OLED screen
 				oledData.type = CPUTEMP;
@@ -2004,8 +1996,6 @@ void accelGyroTaskFunction(void *argument)
   /* USER CODE BEGIN accelGyroTaskFunction */
 
   BaseType_t xStatus = pdFALSE;
-  char cText[OUTPUT_BUFFER_LEN] = {0};
-  StringData_t printString = {0};
   Data_t oledData = {0};
 
   // Accelerometer readings
@@ -2029,16 +2019,13 @@ void accelGyroTaskFunction(void *argument)
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
 																 OLED_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
-	// Initialize struct used for printing data
-	vInitPrintStringData(&printString, cText, sizeof(cText), accelGyroPrintSemHandle);
-
 	// Synchronize task initialization
 	xEventGroupWaitBits(commonEventHandle, OLED_INIT_EVENT, pdFALSE, pdTRUE, pdMS_TO_TICKS(STD_DELAY));
 
 	// Initialize accelerometer
 	xStatus = xAccelGyroInit();
 	if (pdFAIL == xStatus) {
-		xSendStringByQueue(&printString, printStringQueueHandle, "[accelGyroTask] accelGyro init failed\r\n");
+		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[accelGyroTask] accelGyro init failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
 	} else {
 		xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 	}
@@ -2223,8 +2210,6 @@ void oledTaskFunction(void *argument)
   /* USER CODE BEGIN oledTaskFunction */
 	BaseType_t xStatus = pdFALSE;
 	char cText[TEXT_ARRAY] = {0};
-	char cPrintText[OUTPUT_BUFFER_LEN] = {0};
-	StringData_t printString = {0};
 	Data_t printData = {0};
 
 	// Task synchronization bits
@@ -2235,9 +2220,6 @@ void oledTaskFunction(void *argument)
 	// Timer callback and counter of timeout events
 	TimerCallback_t* pOledTimerCallback = NULL;
 	uint32_t xOledTimerExecuted = 0;
-
-	// Initialize string data
-	vInitPrintStringData(&printString, cPrintText, sizeof(cPrintText), oledPrintSemHandle);
 
 	// Initialize screen and start continuous DMA transfer
 	ssd1331_init();
@@ -2276,7 +2258,7 @@ void oledTaskFunction(void *argument)
 	// Set default timer period to 10s
 	xStatus = xTimerChangePeriod(oledTimHandle, pdMS_TO_TICKS(10000), pdMS_TO_TICKS(100));
 	if (pdFAIL == xStatus)
-		xSendStringByQueue(&printString, printStringQueueHandle, "[oledTask] Unable to set OLED screen timeout\r\n");
+		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[oledTask] Unable to set OLED screen timeout\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
 
 	/* Infinite loop */
   for(;;)
@@ -2480,8 +2462,6 @@ void tempHumTaskFunction(void *argument)
 	uint32_t xNotification = 0;
 
 	// Data printing and display
-	char cText[OUTPUT_BUFFER_LEN] = {0};
-	StringData_t printString = {0};
 	Data_t oledData = {0};
 
 	// Task priority
@@ -2502,9 +2482,6 @@ void tempHumTaskFunction(void *argument)
 	float fTemperature = 0.0f;
 	float fHumidity = 0.0f;
 
-	// Initialize string data
-	vInitPrintStringData(&printString, cText, sizeof(cText), tempHumPrintSemHandle);
-
 	// GPIO reconfiguration settings
 	GPIO_InitStructure.Alternate = GPIO_AF1_TIM1;
 	GPIO_InitStructure.Pin = TEMP_HUM_SENS_Pin;
@@ -2516,7 +2493,7 @@ void tempHumTaskFunction(void *argument)
 
 	xStatus = xTimerChangePeriod(tempHumTimHandle, pdMS_TO_TICKS(500), pdMS_TO_TICKS(100));
 	if (pdFAIL == xStatus)
-		xSendStringByQueue(&printString, printStringQueueHandle, "tempHumTask: timer change period failed\r\n");
+		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[tempHumTask] Timer change period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
 
   for(;;)
   {
@@ -2562,7 +2539,7 @@ void tempHumTaskFunction(void *argument)
   		// Received checksum shoud be the summation of the first 4 bytes
   		cChecksum = (cSensorData[0] + cSensorData[1] + cSensorData[2] + cSensorData[3]);
   		if (cChecksum != cSensorData[4])
-  			xSendStringByQueue(&printString, printStringQueueHandle, "[tempHumTask] Wrong checksum!\r\n");
+  			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[tempHumTask] Wrong checksum!\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
 
   		// Calculate temperature and humidity
   		sRawHumidity = (uint16_t)(cSensorData[0] << 8) | cSensorData[1];
