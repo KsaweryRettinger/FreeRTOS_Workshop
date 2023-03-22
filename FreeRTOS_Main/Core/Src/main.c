@@ -73,6 +73,12 @@ typedef struct {
 	SemaphoreHandle_t pStringLock;	// semaphore used to guard access to string
 } StringData_t;
 
+// Timer callback struct
+typedef struct {
+  osTimerFunc_t func;
+  void         *arg;
+} TimerCallback_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -2124,6 +2130,10 @@ void eventTaskFunction(void *argument)
 	EventBits_t uxBitsToWaitFor = (DIST_INIT_EVENT | ACCEL_GYRO_INIT_EVENT | OLED_INIT_EVENT |
 																 CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
+	// OLED timer callback and number of timeout events
+	TimerCallback_t *pOledTimerCallback = NULL;
+	uint32_t *pxOledTimerExecuted = NULL;
+
 	// Initialize string data
 	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
 
@@ -2191,6 +2201,11 @@ void eventTaskFunction(void *argument)
   		else
   			xSendStringByQueue(&printString, printStringQueueHandle, \
   					"[eventTask] Unable to set OLED screen timeout\r\n");
+
+  		// Get OLED timer callback argument, containing number of timeout events
+			pOledTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(oledTimHandle);
+			pxOledTimerExecuted = (uint32_t *)pOledTimerCallback->arg;
+			xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Number of OLED timeouts: %lu\r\n", *pxOledTimerExecuted);
     }
   }
   /* USER CODE END eventTaskFunction */
@@ -2216,6 +2231,10 @@ void oledTaskFunction(void *argument)
 	EventBits_t uxThisTasksSyncBits = OLED_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
 																 ACCEL_GYRO_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+
+	// Timer callback and counter of timeout events
+	TimerCallback_t* pOledTimerCallback = NULL;
+	uint32_t xOledTimerExecuted = 0;
 
 	// Initialize string data
 	vInitPrintStringData(&printString, cPrintText, sizeof(cPrintText), oledPrintSemHandle);
@@ -2250,6 +2269,11 @@ void oledTaskFunction(void *argument)
   ssd1331_clear_screen(BLACK);
 	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
 
+	// Get OLED timer callback and set callback argument
+	pOledTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(oledTimHandle);
+	pOledTimerCallback->arg = &xOledTimerExecuted;
+
+	// Set default timer period to 10s
 	xStatus = xTimerChangePeriod(oledTimHandle, pdMS_TO_TICKS(10000), pdMS_TO_TICKS(100));
 	if (pdFAIL == xStatus)
 		xSendStringByQueue(&printString, printStringQueueHandle, "[oledTask] Unable to set OLED screen timeout\r\n");
@@ -2574,8 +2598,14 @@ void tempHumTimCallback(void *argument)
 void oledTimCallback(void *argument)
 {
   /* USER CODE BEGIN oledTimCallback */
+
+	// Increment counter, pointed to by argument
+	(*(uint32_t*)argument)++;
+
+	// Suspend OLED task and clear screen
 	vTaskSuspend(oledTaskHandle);
 	memset(screenBuffer, 0x0, sizeof(screenBuffer));
+
   /* USER CODE END oledTimCallback */
 }
 
