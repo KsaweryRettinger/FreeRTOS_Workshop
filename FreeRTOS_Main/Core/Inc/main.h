@@ -125,6 +125,10 @@ void Error_Handler(void);
 #define DIST_TRIGGER_INIT_EVENT (0x100)
 #define DIST_ECHO_EVENT (0x200)
 #define TEMP_HUM_IC_CPLT (0x400)
+#define SAVE_TO_FLASH (0x800)
+#define LOAD_FROM_FLASH (0x1000)
+#define FLASH_INIT_EVENT (0x2000)
+
 
 // CPU temperature readings
 #define VDD (3.3)
@@ -192,6 +196,9 @@ void Error_Handler(void);
 
 // Distance sensor
 #define TIME_TO_DIST_CM (58)
+
+// Flash memory
+#define FLASH_SECTOR7_ADDR (0x08060000);
 
 /* USER CODE END Private defines */
 

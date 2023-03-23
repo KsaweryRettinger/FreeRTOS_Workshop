@@ -79,6 +79,12 @@ typedef struct {
   void         *arg;
 } TimerCallback_t;
 
+// Configuration struct, saved to / loaded from flash memory
+typedef struct {
+	TickType_t ulLedTimPeriod;
+	TickType_t ulOledTimPeriod;
+} Config_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -134,13 +140,6 @@ const osThreadAttr_t streamPrintTask_attributes = {
   .name = "streamPrintTask",
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
-};
-/* Definitions for ledTask */
-osThreadId_t ledTaskHandle;
-const osThreadAttr_t ledTask_attributes = {
-  .name = "ledTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for printTask */
 osThreadId_t printTaskHandle;
@@ -198,10 +197,12 @@ const osThreadAttr_t tempHumTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for blinkPeriodQueue */
-osMessageQueueId_t blinkPeriodQueueHandle;
-const osMessageQueueAttr_t blinkPeriodQueue_attributes = {
-  .name = "blinkPeriodQueue"
+/* Definitions for saveLoadTask */
+osThreadId_t saveLoadTaskHandle;
+const osThreadAttr_t saveLoadTask_attributes = {
+  .name = "saveLoadTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for printStringQueue */
 osMessageQueueId_t printStringQueueHandle;
@@ -212,11 +213,6 @@ const osMessageQueueAttr_t printStringQueue_attributes = {
 osMessageQueueId_t printDataQueueHandle;
 const osMessageQueueAttr_t printDataQueue_attributes = {
   .name = "printDataQueue"
-};
-/* Definitions for cpuTempQueue */
-osMessageQueueId_t cpuTempQueueHandle;
-const osMessageQueueAttr_t cpuTempQueue_attributes = {
-  .name = "cpuTempQueue"
 };
 /* Definitions for oledDataQueue */
 osMessageQueueId_t oledDataQueueHandle;
@@ -232,6 +228,11 @@ const osTimerAttr_t tempHumTim_attributes = {
 osTimerId_t oledTimHandle;
 const osTimerAttr_t oledTim_attributes = {
   .name = "oledTim"
+};
+/* Definitions for ledTim */
+osTimerId_t ledTimHandle;
+const osTimerAttr_t ledTim_attributes = {
+  .name = "ledTim"
 };
 /* Definitions for printStringMutex */
 osMutexId_t printStringMutexHandle;
@@ -308,7 +309,6 @@ static void MX_TIM1_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void streamPrintTaskFunction(void *argument);
-void ledTaskFunction(void *argument);
 void printTaskFunction(void *argument);
 void cpuTempTaskFunction(void *argument);
 void accelGyroTaskFunction(void *argument);
@@ -317,8 +317,10 @@ void oledTaskFunction(void *argument);
 void distTaskFunction(void *argument);
 void distTriggerFunction(void *argument);
 void tempHumTaskFunction(void *argument);
+void saveLoadTaskFunction(void *argument);
 void tempHumTimCallback(void *argument);
 void oledTimCallback(void *argument);
+void ledTimCallback(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -338,6 +340,8 @@ BaseType_t prvPitchRollCommand(char *pcWriteBuffer, size_t xWriteBufferLen, cons
 BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvResetCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvSaveCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 // Utility functions for sending strings via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
@@ -348,6 +352,10 @@ static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, ui
 static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
 static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t setValue, uint8_t valueMask);
 static BaseType_t xAccelGyroInit(void);
+
+// Utility functions for saving/loading data from flash memory
+static void vSaveToFlash(uint8_t *src, size_t size);
+static void vLoadFromFlash(uint8_t *dst, size_t size);
 
 /* USER CODE END PFP */
 
@@ -387,6 +395,14 @@ const CLI_Command_Definition_t xOledPeriodCommand = {.pcCommand = "oledperiod",
 																								.pcHelpString = "oledperiod:\r\n Set oled timeout in ms: oledperiod <time>\r\n",
 																								.pxCommandInterpreter = prvOledPeriodCommand,
 																								.cExpectedNumberOfParameters = 1 };
+const CLI_Command_Definition_t xSaveCommand = {.pcCommand = "save",
+																								.pcHelpString = "save:\r\n Save configuration to flash memory\r\n",
+																								.pxCommandInterpreter = prvSaveCommand,
+																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xLoadCommand = {.pcCommand = "load",
+																								.pcHelpString = "load:\r\n Load configuration from flash memory\r\n",
+																								.pxCommandInterpreter = prvLoadCommand,
+																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
 
@@ -416,6 +432,8 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xOledCommand);
   FreeRTOS_CLIRegisterCommand(&xResetCommand);
   FreeRTOS_CLIRegisterCommand(&xOledPeriodCommand);
+  FreeRTOS_CLIRegisterCommand(&xSaveCommand);
+  FreeRTOS_CLIRegisterCommand(&xLoadCommand);
 
   /* USER CODE END Init */
 
@@ -485,22 +503,19 @@ int main(void)
   /* creation of oledTim */
   oledTimHandle = osTimerNew(oledTimCallback, osTimerOnce, NULL, &oledTim_attributes);
 
+  /* creation of ledTim */
+  ledTimHandle = osTimerNew(ledTimCallback, osTimerPeriodic, NULL, &ledTim_attributes);
+
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* creation of blinkPeriodQueue */
-  blinkPeriodQueueHandle = osMessageQueueNew (1, sizeof(Data_t), &blinkPeriodQueue_attributes);
-
   /* creation of printStringQueue */
   printStringQueueHandle = osMessageQueueNew (10, sizeof(StringData_t), &printStringQueue_attributes);
 
   /* creation of printDataQueue */
   printDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &printDataQueue_attributes);
-
-  /* creation of cpuTempQueue */
-  cpuTempQueueHandle = osMessageQueueNew (1, 4, &cpuTempQueue_attributes);
 
   /* creation of oledDataQueue */
   oledDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &oledDataQueue_attributes);
@@ -518,9 +533,6 @@ int main(void)
 
   /* creation of streamPrintTask */
   streamPrintTaskHandle = osThreadNew(streamPrintTaskFunction, NULL, &streamPrintTask_attributes);
-
-  /* creation of ledTask */
-  ledTaskHandle = osThreadNew(ledTaskFunction, NULL, &ledTask_attributes);
 
   /* creation of printTask */
   printTaskHandle = osThreadNew(printTaskFunction, NULL, &printTask_attributes);
@@ -545,6 +557,9 @@ int main(void)
 
   /* creation of tempHumTask */
   tempHumTaskHandle = osThreadNew(tempHumTaskFunction, NULL, &tempHumTask_attributes);
+
+  /* creation of saveLoadTask */
+  saveLoadTaskHandle = osThreadNew(saveLoadTaskFunction, NULL, &saveLoadTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1403,6 +1418,50 @@ static BaseType_t xAccelGyroInit(void) {
 	return xStatus;
 }
 
+static void vSaveToFlash(uint8_t *src, size_t size) {
+
+	// Structure used to erase flash sector 7
+	FLASH_EraseInitTypeDef flashErase = {.TypeErase = FLASH_TYPEERASE_SECTORS,
+																			 .Sector = FLASH_SECTOR_7,
+																			 .NbSectors = 1,
+																			 .VoltageRange = FLASH_VOLTAGE_RANGE_3};
+
+	// Start address of flash sector 7
+	void *pvSector7 = (void *)FLASH_SECTOR7_ADDR;
+	uint32_t SectorErr = 0;
+
+	// Start of critical section
+	taskENTER_CRITICAL();
+
+	// Unlock flash and clear all flags
+	HAL_FLASH_Unlock();
+	__HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
+												 FLASH_FLAG_PGAERR | FLASH_FLAG_RDERR | FLASH_FLAG_RDERR | FLASH_FLAG_BSY);
+
+	// Erase flash sector 7
+	HAL_FLASHEx_Erase(&flashErase, &SectorErr);
+
+	// Write all bytes to sector 7
+	for (size_t i = 0; i < size; i++) {
+		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, (uint32_t)pvSector7 + i, (uint64_t)src[i]);
+	}
+
+	// Lock flash
+	HAL_FLASH_Lock();
+
+	// End of critical section
+	taskEXIT_CRITICAL();
+}
+
+static void vLoadFromFlash(uint8_t *dst, size_t size) {
+
+	// pointer to the beginning of sector 7
+	void *pvSector7 = (void *)FLASH_SECTOR7_ADDR;
+
+	// copy the data from flash to the buffer
+	memcpy(dst, pvSector7, size);
+}
+
 // FreeRTOS CLI "clear" command
 BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 
@@ -1425,13 +1484,22 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	// Interpret command
 	if (strncmp(pcParameter1, "on", xParameter1StringLength) == 0)
 	{
-		strncpy(pcWriteBuffer, "[cli] Resuming LED task\r\n", xWriteBufferLen);
-		vTaskResume(ledTaskHandle);
+		// Start LED timer
+		if (!xTimerIsTimerActive(ledTimHandle)) {
+			strncpy(pcWriteBuffer, "[cli] Starting LED timer\r\n", xWriteBufferLen);
+			if (pdFAIL == xTimerStart(ledTimHandle, 0))
+				strncat(pcWriteBuffer, "[cli] Starting LED timer failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+		}
 	}
 	else if (strncmp(pcParameter1, "off", xParameter1StringLength) == 0)
 	{
-		strncpy(pcWriteBuffer, "[cli] Suspending LED task\r\n", xWriteBufferLen);
-		vTaskSuspend(ledTaskHandle);
+		// Stop LED timer
+		if (xTimerIsTimerActive(ledTimHandle)) {
+			strncpy(pcWriteBuffer, "[cli] Stopping LED timer\r\n", xWriteBufferLen);
+			if (pdFAIL == xTimerStop(ledTimHandle, 0))
+				strncat(pcWriteBuffer, "[cli] Stopping LED timer failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+		}
 	}
 	else
 	{
@@ -1446,27 +1514,18 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 
 	BaseType_t xParameter1StringLength = 0;
 	const char *pcParameter1 = NULL;
-	Data_t blinkPeriodData = {.type = BLINK_PERIOD, .value.ui = 0};
+	BaseType_t xBlinkPeriod = 0;
 
 	// Get first parameter - LED blink period in ms
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
-
-	// Get LED blink period
-	blinkPeriodData.value.ui = (uint32_t)atoi(pcParameter1);
-
-	// Reset queue and send new blink period
-	xQueueReset(blinkPeriodQueueHandle);
-	xQueueSend(blinkPeriodQueueHandle, &blinkPeriodData, 0);
+	xBlinkPeriod = (uint32_t)atoi(pcParameter1);
 
 	// Abort LED task delay
-	xTaskAbortDelay(ledTaskHandle);
-	snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting blinking period to %lu ms\r\n", blinkPeriodData.value.ui);
+	snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting LED blinking timer period to %lu ms\r\n", xBlinkPeriod);
 
-	// Resume LED task if it was suspended
-	if (eTaskGetState(ledTaskHandle) == eSuspended) {
-		vTaskResume(ledTaskHandle);
-		strncat(pcWriteBuffer, "[cli] Resuming led blink task\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
-	}
+	// Set new timer period
+	if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(xBlinkPeriod), 0))
+		strncat(pcWriteBuffer, "[cli] Chaning LED timer period failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
 
 	return pdFALSE;
 }
@@ -1564,6 +1623,32 @@ BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, con
 		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED timeout to %lu ms\r\n", xOledPeriod);
 	else
 		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting OLED timeout failed\r\n");
+
+	return pdFALSE;
+}
+
+BaseType_t prvSaveCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	BaseType_t xStatus = pdFALSE;
+	xStatus = xTaskNotify(saveLoadTaskHandle, SAVE_TO_FLASH, eSetBits);
+
+	if (pdPASS == xStatus)
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Sending 'save' notification to saveLoadTask\r\n");
+	else
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Failed sending 'save' notification to saveLoadTask\r\n");
+
+	return pdFALSE;
+}
+
+BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	BaseType_t xStatus = pdFALSE;
+	xStatus = xTaskNotify(saveLoadTaskHandle, LOAD_FROM_FLASH, eSetBits);
+
+	if (pdPASS == xStatus)
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Sending 'load' notification to saveLoadTask\r\n");
+	else
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Failed sending 'load' notification to saveLoadTask\r\n");
 
 	return pdFALSE;
 }
@@ -1764,46 +1849,6 @@ void streamPrintTaskFunction(void *argument)
   /* USER CODE END streamPrintTaskFunction */
 }
 
-/* USER CODE BEGIN Header_ledTaskFunction */
-/**
-* @brief Function implementing the ledTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_ledTaskFunction */
-void ledTaskFunction(void *argument)
-{
-  /* USER CODE BEGIN ledTaskFunction */
-  /* Infinite loop */
-	BaseType_t xStatus = pdFALSE;
-	uint32_t uiBlinkPeriod = STD_DELAY;
-	TickType_t xLastWakeTime = 0;
-	Data_t receiveData = {.type = BLINK_PERIOD, .value.ui = uiBlinkPeriod};
-
-	vTaskSuspend(NULL);
-
-	for(;;)
-  {
-		// Save wake time in ticks
-		xLastWakeTime = xTaskGetTickCount();
-
-		// Read data from queue and update blink period
-		xStatus = xQueueReceive(blinkPeriodQueueHandle, &receiveData, 0);
-		if (xStatus == pdTRUE) {
-			if (receiveData.type == BLINK_PERIOD) {
-				uiBlinkPeriod = receiveData.value.ui;
-				xQueueSend(printDataQueueHandle, &receiveData, pdMS_TO_TICKS(SHORT_DELAY));
-				xQueueSend(oledDataQueueHandle, &receiveData, pdMS_TO_TICKS(SHORT_DELAY));
-			}
-		}
-
-		// Toggle LED
-  	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(uiBlinkPeriod));
-  }
-  /* USER CODE END ledTaskFunction */
-}
-
 /* USER CODE BEGIN Header_printTaskFunction */
 /**
 * @brief Function implementing the printTask thread.
@@ -1942,7 +1987,7 @@ void cpuTempTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = CPU_TEMP_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
 																 OLED_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Text buffer and string data
@@ -2016,7 +2061,7 @@ void accelGyroTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = ACCEL_GYRO_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
 																 OLED_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Synchronize task initialization
@@ -2114,8 +2159,8 @@ void eventTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = EVENT_HANDLER_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (DIST_INIT_EVENT | ACCEL_GYRO_INIT_EVENT | OLED_INIT_EVENT |
-																 CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | DIST_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// OLED timer callback and number of timeout events
 	TimerCallback_t *pOledTimerCallback = NULL;
@@ -2214,7 +2259,7 @@ void oledTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = OLED_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
 																 ACCEL_GYRO_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Timer callback and counter of timeout events
@@ -2368,7 +2413,7 @@ void distTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = DIST_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
 																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
 	// Start circular DMA transfer for input capture timer
@@ -2418,7 +2463,7 @@ void distTriggerFunction(void *argument)
 	// Task synchronization bits
 	EventBits_t xEventGroupValue = 0;
 	EventBits_t uxThisTasksSyncBits = DIST_TRIGGER_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
 																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT);
 
 	// Setup trigger timer (one pulse PWM)
@@ -2563,6 +2608,78 @@ void tempHumTaskFunction(void *argument)
   /* USER CODE END tempHumTaskFunction */
 }
 
+/* USER CODE BEGIN Header_saveLoadTaskFunction */
+/**
+* @brief Function implementing the saveLoadTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_saveLoadTaskFunction */
+void saveLoadTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN saveLoadTaskFunction */
+
+	uint32_t xNotification = 0;
+	BaseType_t xStatus = pdFAIL;
+	Config_t config = {0};
+	EventBits_t uxThisTasksSyncBits = FLASH_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT | OLED_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+
+	// Synchronize task initialization
+	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
+
+	// Load current configuration from flash
+	vLoadFromFlash((uint8_t *)&config, sizeof(config));
+
+	// Update LED timer period
+	if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
+		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+
+	// Update OLED timer period
+	if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
+			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing OLED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+
+	// Reset OLED timer
+	if (pdFAIL == xTimerReset(oledTimHandle, pdMS_TO_TICKS(100)))
+		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] OLED timer reset failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+
+	for(;;)
+  {
+		xStatus = xTaskNotifyWait(0, 0xffffffff, &xNotification, pdMS_TO_TICKS(500));
+
+		// Save configuration to flash memory
+		if (pdTRUE == xStatus && xNotification == SAVE_TO_FLASH) {
+			config.ulLedTimPeriod = xTimerGetPeriod(ledTimHandle);
+			config.ulOledTimPeriod = xTimerGetPeriod(oledTimHandle);
+			vSaveToFlash((uint8_t *)&config, sizeof(config));
+			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Config saved to flash\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+		}
+
+		// Load configuration from flash memory
+		if (pdTRUE == xStatus && xNotification == SAVE_TO_FLASH) {
+
+			// Load current configuration from flash
+			vLoadFromFlash((uint8_t *)&config, sizeof(config));
+
+			// Update LED timer period
+			if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
+				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+
+			// Update OLED timer period
+			if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
+					xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing OLED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+
+			// Reset OLED timer
+			if (pdFAIL == xTimerReset(oledTimHandle, pdMS_TO_TICKS(100)))
+				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] OLED timer reset failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+
+			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Config loaded from flash\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+		}
+  }
+  /* USER CODE END saveLoadTaskFunction */
+}
+
 /* tempHumTimCallback function */
 void tempHumTimCallback(void *argument)
 {
@@ -2584,6 +2701,14 @@ void oledTimCallback(void *argument)
 	memset(screenBuffer, 0x0, sizeof(screenBuffer));
 
   /* USER CODE END oledTimCallback */
+}
+
+/* ledTimCallback function */
+void ledTimCallback(void *argument)
+{
+  /* USER CODE BEGIN ledTimCallback */
+	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+  /* USER CODE END ledTimCallback */
 }
 
 /**
