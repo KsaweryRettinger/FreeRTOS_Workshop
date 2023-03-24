@@ -1635,6 +1635,7 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	BaseType_t xParameter1StringLength = 0;
 	const char *pcParameter1 = NULL;
 	BaseType_t xBlinkPeriod = 0;
+	Data_t printValue = {0};
 
 	// Get first parameter - LED blink period in ms
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
@@ -1644,8 +1645,13 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting LED blinking timer period to %lu ms\r\n", xBlinkPeriod);
 
 	// Set new timer period
-	if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(xBlinkPeriod), 0))
+	if (pdPASS == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(xBlinkPeriod), 0)) {
+		printValue.type = BLINK_PERIOD;
+		printValue.value.ui = xBlinkPeriod;
+		xQueueSend(blePrintDataQueueHandle, &printValue, 0);
+	} else {
 		strncat(pcWriteBuffer, "[cli] Chaning LED timer period failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+	}
 
 	return pdFALSE;
 }
@@ -2117,7 +2123,7 @@ void cpuTempTaskFunction(void *argument)
 
 	// Text buffer and string data
 	char cText[OUTPUT_BUFFER_LEN] = {0};
-	Data_t oledData = {0};
+	Data_t printData = {0};
 
 	// Synchronize task initialization
 	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
@@ -2145,9 +2151,12 @@ void cpuTempTaskFunction(void *argument)
 				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, cText, strnlen(cText, sizeof(cText)), pdMS_TO_TICKS(STD_DELAY));
 
 				// Send to OLED screen
-				oledData.type = CPUTEMP;
-				oledData.value.f = fCpuTemp;
-				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+				printData.type = CPUTEMP;
+				printData.value.f = fCpuTemp;
+				xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+
+				// Send to BT task
+				xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
     	}
     }
   }
