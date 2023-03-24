@@ -49,7 +49,8 @@ typedef enum {
 	MOTION,
 	DISTANCE,
 	TEMPERATURE,
-	HUMIDITY
+	HUMIDITY,
+	PITCHANDROLL
 } eDataType;
 
 // Union for sending different data types via queue
@@ -57,6 +58,7 @@ typedef union {
 	uint32_t ui;
 	uint8_t uc;
 	float f;
+	float pr[2];
 } unDataValue;
 
 // Structure that encapsulates data sent via queue
@@ -116,7 +118,10 @@ TIM_HandleTypeDef htim5;
 DMA_HandleTypeDef hdma_tim1_ch1;
 DMA_HandleTypeDef hdma_tim5_ch1;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
@@ -204,6 +209,34 @@ const osThreadAttr_t saveLoadTask_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for bleCliTask */
+osThreadId_t bleCliTaskHandle;
+const osThreadAttr_t bleCliTask_attributes = {
+  .name = "bleCliTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityHigh1,
+};
+/* Definitions for blePrintTask */
+osThreadId_t blePrintTaskHandle;
+const osThreadAttr_t blePrintTask_attributes = {
+  .name = "blePrintTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for bleStrPrintTask */
+osThreadId_t bleStrPrintTaskHandle;
+const osThreadAttr_t bleStrPrintTask_attributes = {
+  .name = "bleStrPrintTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityAboveNormal,
+};
+/* Definitions for blePanelTask */
+osThreadId_t blePanelTaskHandle;
+const osThreadAttr_t blePanelTask_attributes = {
+  .name = "blePanelTask",
+  .stack_size = 256 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for printStringQueue */
 osMessageQueueId_t printStringQueueHandle;
 const osMessageQueueAttr_t printStringQueue_attributes = {
@@ -218,6 +251,11 @@ const osMessageQueueAttr_t printDataQueue_attributes = {
 osMessageQueueId_t oledDataQueueHandle;
 const osMessageQueueAttr_t oledDataQueue_attributes = {
   .name = "oledDataQueue"
+};
+/* Definitions for blePrintDataQueue */
+osMessageQueueId_t blePrintDataQueueHandle;
+const osMessageQueueAttr_t blePrintDataQueue_attributes = {
+  .name = "blePrintDataQueue"
 };
 /* Definitions for tempHumTim */
 osTimerId_t tempHumTimHandle;
@@ -238,6 +276,11 @@ const osTimerAttr_t ledTim_attributes = {
 osMutexId_t printStringMutexHandle;
 const osMutexAttr_t printStringMutex_attributes = {
   .name = "printStringMutex"
+};
+/* Definitions for blePrintStringMutex */
+osMutexId_t blePrintStringMutexHandle;
+const osMutexAttr_t blePrintStringMutex_attributes = {
+  .name = "blePrintStringMutex"
 };
 /* Definitions for uart2TxSem */
 osSemaphoreId_t uart2TxSemHandle;
@@ -263,6 +306,11 @@ const osSemaphoreAttr_t accelGyroSem_attributes = {
 osSemaphoreId_t eventPrintSemHandle;
 const osSemaphoreAttr_t eventPrintSem_attributes = {
   .name = "eventPrintSem"
+};
+/* Definitions for uart1TxSem */
+osSemaphoreId_t uart1TxSemHandle;
+const osSemaphoreAttr_t uart1TxSem_attributes = {
+  .name = "uart1TxSem"
 };
 /* Definitions for commonEvent */
 osEventFlagsId_t commonEventHandle;
@@ -306,6 +354,7 @@ static void MX_SPI2_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_USART1_UART_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void streamPrintTaskFunction(void *argument);
@@ -318,6 +367,10 @@ void distTaskFunction(void *argument);
 void distTriggerFunction(void *argument);
 void tempHumTaskFunction(void *argument);
 void saveLoadTaskFunction(void *argument);
+void bleCliTaskFunction(void *argument);
+void blePrintTaskFunction(void *argument);
+void bleStrPrintTaskFunction(void *argument);
+void blePanelTaskFunction(void *argument);
 void tempHumTimCallback(void *argument);
 void oledTimCallback(void *argument);
 void ledTimCallback(void *argument);
@@ -455,6 +508,7 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM5_Init();
   MX_TIM1_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
@@ -471,6 +525,9 @@ int main(void)
   /* Create the mutex(es) */
   /* creation of printStringMutex */
   printStringMutexHandle = osMutexNew(&printStringMutex_attributes);
+
+  /* creation of blePrintStringMutex */
+  blePrintStringMutexHandle = osMutexNew(&blePrintStringMutex_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -491,6 +548,9 @@ int main(void)
 
   /* creation of eventPrintSem */
   eventPrintSemHandle = osSemaphoreNew(1, 1, &eventPrintSem_attributes);
+
+  /* creation of uart1TxSem */
+  uart1TxSemHandle = osSemaphoreNew(1, 1, &uart1TxSem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -519,6 +579,9 @@ int main(void)
 
   /* creation of oledDataQueue */
   oledDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &oledDataQueue_attributes);
+
+  /* creation of blePrintDataQueue */
+  blePrintDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &blePrintDataQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -560,6 +623,18 @@ int main(void)
 
   /* creation of saveLoadTask */
   saveLoadTaskHandle = osThreadNew(saveLoadTaskFunction, NULL, &saveLoadTask_attributes);
+
+  /* creation of bleCliTask */
+  bleCliTaskHandle = osThreadNew(bleCliTaskFunction, NULL, &bleCliTask_attributes);
+
+  /* creation of blePrintTask */
+  blePrintTaskHandle = osThreadNew(blePrintTaskFunction, NULL, &blePrintTask_attributes);
+
+  /* creation of bleStrPrintTask */
+  bleStrPrintTaskHandle = osThreadNew(bleStrPrintTaskFunction, NULL, &bleStrPrintTask_attributes);
+
+  /* creation of blePanelTask */
+  blePanelTaskHandle = osThreadNew(blePanelTaskFunction, NULL, &blePanelTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1022,6 +1097,39 @@ static void MX_TIM5_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -1092,6 +1200,12 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream2_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+  /* DMA2_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
+  /* DMA2_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
 
 }
 
@@ -2678,6 +2792,78 @@ void saveLoadTaskFunction(void *argument)
 		}
   }
   /* USER CODE END saveLoadTaskFunction */
+}
+
+/* USER CODE BEGIN Header_bleCliTaskFunction */
+/**
+* @brief Function implementing the bleCliTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_bleCliTaskFunction */
+void bleCliTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN bleCliTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END bleCliTaskFunction */
+}
+
+/* USER CODE BEGIN Header_blePrintTaskFunction */
+/**
+* @brief Function implementing the blePrintTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_blePrintTaskFunction */
+void blePrintTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN blePrintTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END blePrintTaskFunction */
+}
+
+/* USER CODE BEGIN Header_bleStrPrintTaskFunction */
+/**
+* @brief Function implementing the bleStrPrintTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_bleStrPrintTaskFunction */
+void bleStrPrintTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN bleStrPrintTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END bleStrPrintTaskFunction */
+}
+
+/* USER CODE BEGIN Header_blePanelTaskFunction */
+/**
+* @brief Function implementing the blePanelTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_blePanelTaskFunction */
+void blePanelTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN blePanelTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END blePanelTaskFunction */
 }
 
 /* tempHumTimCallback function */

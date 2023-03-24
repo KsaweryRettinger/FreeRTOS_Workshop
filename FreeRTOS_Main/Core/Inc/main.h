@@ -96,6 +96,10 @@ void Error_Handler(void);
 #define MOTION_INT_EXTI_IRQn EXTI9_5_IRQn
 #define TEMP_HUM_SENS_Pin GPIO_PIN_8
 #define TEMP_HUM_SENS_GPIO_Port GPIOA
+#define BLE_TX_Pin GPIO_PIN_9
+#define BLE_TX_GPIO_Port GPIOA
+#define BLE_RX_Pin GPIO_PIN_10
+#define BLE_RX_GPIO_Port GPIOA
 #define TMS_Pin GPIO_PIN_13
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
