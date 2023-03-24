@@ -287,11 +287,6 @@ osSemaphoreId_t uart2TxSemHandle;
 const osSemaphoreAttr_t uart2TxSem_attributes = {
   .name = "uart2TxSem"
 };
-/* Definitions for uart2RxSem */
-osSemaphoreId_t uart2RxSemHandle;
-const osSemaphoreAttr_t uart2RxSem_attributes = {
-  .name = "uart2RxSem"
-};
 /* Definitions for adc1Sem */
 osSemaphoreId_t adc1SemHandle;
 const osSemaphoreAttr_t adc1Sem_attributes = {
@@ -319,8 +314,9 @@ const osEventFlagsAttr_t commonEvent_attributes = {
 };
 /* USER CODE BEGIN PV */
 
-// Stream buffer for passing messages to CLI print task
+// CLI stream buffers
 StreamBufferHandle_t xStreamBufferString = NULL;
+StreamBufferHandle_t xStreamBufferStringBle = NULL;
 
 // Array for storing jostick ADC readings
 uint16_t sAdc2Read[2] = {0};
@@ -395,6 +391,7 @@ BaseType_t prvResetCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvSaveCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvPanelCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 // Utility functions for sending strings via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
@@ -456,6 +453,10 @@ const CLI_Command_Definition_t xLoadCommand = {.pcCommand = "load",
 																								.pcHelpString = "load:\r\n Load configuration from flash memory\r\n",
 																								.pxCommandInterpreter = prvLoadCommand,
 																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xPanelCommand = {.pcCommand = "panel",
+																								.pcHelpString = "panel:\r\n Sends panel configuration to BLE phone app\r\n",
+																								.pxCommandInterpreter = prvPanelCommand,
+																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
 
@@ -487,6 +488,7 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xOledPeriodCommand);
   FreeRTOS_CLIRegisterCommand(&xSaveCommand);
   FreeRTOS_CLIRegisterCommand(&xLoadCommand);
+  FreeRTOS_CLIRegisterCommand(&xPanelCommand);
 
   /* USER CODE END Init */
 
@@ -513,7 +515,9 @@ int main(void)
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
   xStreamBufferString = xStreamBufferCreate(OUTPUT_BUFFER_LEN, 1);
+  xStreamBufferStringBle = xStreamBufferCreate(OUTPUT_BUFFER_LEN, 1);
   xStreamBufferReset(xStreamBufferString);
+  xStreamBufferReset(xStreamBufferStringBle);
 
   // Start continuous ADC conversions for joystick
   // HAL_ADC_Start_DMA(&hadc2, (uint32_t *)&sAdc2Read[0], 2);
@@ -536,9 +540,6 @@ int main(void)
   /* Create the semaphores(s) */
   /* creation of uart2TxSem */
   uart2TxSemHandle = osSemaphoreNew(1, 1, &uart2TxSem_attributes);
-
-  /* creation of uart2RxSem */
-  uart2RxSemHandle = osSemaphoreNew(1, 1, &uart2RxSem_attributes);
 
   /* creation of adc1Sem */
   adc1SemHandle = osSemaphoreNew(1, 1, &adc1Sem_attributes);
@@ -1293,21 +1294,26 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *husart) {
 		if (xStatus == pdTRUE) {
 			portYIELD_FROM_ISR(xYieldRequired);
 		}
+	} else if (husart->Instance == USART1) {
+		xStatus = xSemaphoreGiveFromISR(uart1TxSemHandle, &xYieldRequired);
+		if (xStatus == pdTRUE) {
+			portYIELD_FROM_ISR(xYieldRequired);
+		}
 	}
 }
 
 // UART data received ISR
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *husart) {
 
-	BaseType_t xStatus = pdFALSE;
 	BaseType_t xYieldRequired = pdFALSE;
 
 	//Check UART and give semaphore
 	if (husart->Instance == USART2) {
-		xStatus = xSemaphoreGiveFromISR(uart2RxSemHandle, &xYieldRequired);
-		if (xStatus == pdTRUE) {
-			portYIELD_FROM_ISR(xYieldRequired);
-		}
+		vTaskNotifyGiveFromISR(cliTaskHandle, &xYieldRequired);
+		portYIELD_FROM_ISR(xYieldRequired);
+	} else if (husart->Instance == USART1) {
+		vTaskNotifyGiveFromISR(bleCliTaskHandle, &xYieldRequired);
+		portYIELD_FROM_ISR(xYieldRequired);
 	}
 }
 
@@ -1767,6 +1773,11 @@ BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 	return pdFALSE;
 }
 
+BaseType_t prvPanelCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+	vTaskResume(blePanelTaskHandle);
+	strncpy(pcWriteBuffer, "[cli] Resuming blePanelTask\r\n", xWriteBufferLen);
+}
+
 // Initializes string data to be sent via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock) {
 	pPrintStringData->pcString = pcString;
@@ -1829,6 +1840,7 @@ void cliTaskFunction(void *argument)
 
 	// Task variables
 	BaseType_t xStatus = pdFALSE;
+	BaseType_t xNotification = 0;
 	uint8_t cInputBufferIndex = 0;
 	char cInputBuffer[INPUT_BUFFER_LEN] = {0};
 	char cOutputBuffer[OUTPUT_BUFFER_LEN] = {0};
@@ -1838,7 +1850,6 @@ void cliTaskFunction(void *argument)
 	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
 
 	// Take Rx semaphore and initiate DMA Rx transfer
-	xSemaphoreTake(uart2RxSemHandle, portMAX_DELAY);
 	HAL_UART_Receive_DMA(&huart2, (uint8_t*)&cRxChar, 1);
 
 	// Send new-page character and welcome message to cliPrintTask
@@ -1847,9 +1858,9 @@ void cliTaskFunction(void *argument)
 
 	for(;;)
   {
-		// Wait for new character and take Rx semaphore
-		xStatus = xSemaphoreTake(uart2RxSemHandle, pdMS_TO_TICKS(STD_DELAY));
-		if (xStatus == pdTRUE)
+		// Wait for new character
+		xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
+		if (xNotification != 0)
 		{
 			// Copy received character and initiate next DMA transfer
 			cTxChar = cRxChar;
