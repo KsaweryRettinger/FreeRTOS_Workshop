@@ -1782,6 +1782,7 @@ BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 BaseType_t prvPanelCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 	vTaskResume(blePanelTaskHandle);
 	strncpy(pcWriteBuffer, "[cli] Resuming blePanelTask\r\n", xWriteBufferLen);
+	return pdFALSE;
 }
 
 // Initializes string data to be sent via queue
@@ -2175,7 +2176,7 @@ void accelGyroTaskFunction(void *argument)
   /* USER CODE BEGIN accelGyroTaskFunction */
 
   BaseType_t xStatus = pdFALSE;
-  Data_t oledData = {0};
+  Data_t printData = {0};
 
   // Accelerometer readings
 	uint16_t sAccel[3] = {0};
@@ -2259,13 +2260,17 @@ void accelGyroTaskFunction(void *argument)
   		gfPitch = fPitch = fPitch / ACCELGYRO_WIN_SIZE;
   		gfRoll = fRoll = fRoll / ACCELGYRO_WIN_SIZE;
 
-  		// Send data to OLED screen
-    	oledData.type = PITCH;
-    	oledData.value.f = fPitch;
-    	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
-    	oledData.type = ROLL;
-    	oledData.value.f = fRoll;
-    	xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+  		// Send data to OLED screen and BT task
+    	printData.type = PITCH;
+    	printData.value.f = fPitch;
+    	xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+    	printData.type = ROLL;
+    	printData.value.f = fRoll;
+    	xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+    	printData.type = PITCHANDROLL;
+    	printData.value.pr[0] = fRoll;
+    	printData.value.pr[1] = fPitch;
+    	xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
   	}
 
   	// Delay next sample
@@ -2289,7 +2294,7 @@ void eventTaskFunction(void *argument)
 	uint8_t cValue = 0;
 	EventBits_t xBitsToWaitFor = (BUTTON_EVENT | MOTION_INT_EVENT);
 	EventBits_t xEventGroupValue = 0;
-	Data_t oledData = {0};
+	Data_t printData = {0};
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = EVENT_HANDLER_INIT_EVENT;
@@ -2342,9 +2347,9 @@ void eventTaskFunction(void *argument)
 													 (cValue & ACCELGYRO_MOTION_STATUS_Z_POS) ? 1 : 0);
 
 				// Send to OLED screen
-				oledData.type = MOTION;
-				oledData.value.uc = cValue;
-				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+				printData.type = MOTION;
+				printData.value.uc = cValue;
+				xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
 
 				// Add delay
 				vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
@@ -2460,6 +2465,9 @@ void oledTaskFunction(void *argument)
   				ssd1331_display_string(0, 13, (uint8_t *)cText, FONT_1206, BLUE);
   				break;
 
+  			case PITCHANDROLL:
+  				break;
+
   			case DISTANCE:
   				// Clear 12 rows starting from row 26 and distance sensor reading at 0,26
   				snprintf(cText, sizeof(cText), "Distance: %lucm", printData.value.ui);
@@ -2543,7 +2551,7 @@ void distTaskFunction(void *argument)
 	uint32_t uiTimerTicksToUs = (SystemCoreClock / 2) / 1000000;
 	uint32_t xEchoRead[2] = {0};
 	uint32_t uiDistance = 0;
-	Data_t oledData = {0};
+	Data_t printValue = {0};
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = DIST_INIT_EVENT;
@@ -2559,22 +2567,29 @@ void distTaskFunction(void *argument)
 	/* Infinite loop */
 	for(;;)
 	{
-			// Wait for sensor echo
-			xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(STD_DELAY));
+		// Wait for sensor echo
+		xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(STD_DELAY));
 
-			if (0 != xNotification) {
+		if (0 != xNotification) {
 
-				// Calculate distance in cm
-				uiDistance = (uint32_t) ((xEchoRead[1] - xEchoRead[0]) / uiTimerTicksToUs) / TIME_TO_DIST_CM;
+			// Calculate distance in cm
+			uiDistance = (uint32_t) ((xEchoRead[1] - xEchoRead[0]) / uiTimerTicksToUs) / TIME_TO_DIST_CM;
 
-				// Send to OLED screen
-				oledData.type = DISTANCE;
-				oledData.value.ui = uiDistance;
-				xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(SHORT_DELAY));
+			// Send to OLED screen
+			printValue.type = DISTANCE;
+			printValue.value.ui = uiDistance;
 
-				// Set echo received event
-				xEventGroupSetBits(commonEventHandle, DIST_ECHO_EVENT);
-			}
+			if (eSuspended != eTaskGetState(oledTaskHandle))
+				xQueueSend(oledDataQueueHandle, &printValue, pdMS_TO_TICKS(SHORT_DELAY));
+
+			// Send to BT task
+			xQueueSend(blePrintDataQueueHandle, &printValue, pdMS_TO_TICKS(SHORT_DELAY));
+
+			// Set echo received event
+			xEventGroupSetBits(commonEventHandle, DIST_ECHO_EVENT);
+		}
+
+		vTaskDelay(pdMS_TO_TICKS(SHORT_DELAY));
 	}
 
   /* USER CODE END distTaskFunction */
@@ -2641,7 +2656,7 @@ void tempHumTaskFunction(void *argument)
 	uint32_t xNotification = 0;
 
 	// Data printing and display
-	Data_t oledData = {0};
+	Data_t printData = {0};
 
 	// Task priority
 	UBaseType_t uxTaskPriority = uxTaskPriorityGet(NULL);
@@ -2726,14 +2741,18 @@ void tempHumTaskFunction(void *argument)
   		fHumidity = sRawHumidity / 10.0;
   		fTemperature = sRawTemperature / 10.0;
 
-  		// Send data to OLED task
-  		oledData.type = TEMPERATURE;
-  		oledData.value.f = fTemperature;
-  		xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(50));
+  		// Send data to OLED and BT tasks
+  		printData.type = TEMPERATURE;
+  		printData.value.f = fTemperature;
+  		if (eSuspended != eTaskGetState(oledTaskHandle))
+  			xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(50));
+  		xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(50));
 
-  		oledData.type = HUMIDITY;
-  		oledData.value.f = fHumidity;
-  		xQueueSend(oledDataQueueHandle, &oledData, pdMS_TO_TICKS(50));
+  		printData.type = HUMIDITY;
+  		printData.value.f = fHumidity;
+  		if (eSuspended != eTaskGetState(oledTaskHandle))
+  			xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(50));
+  		xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(50));
   	}
 
   	// Stop input capture
@@ -2756,6 +2775,7 @@ void saveLoadTaskFunction(void *argument)
 	uint32_t xNotification = 0;
 	BaseType_t xStatus = pdFAIL;
 	Config_t config = {0};
+	Data_t printData = {0};
 	EventBits_t uxThisTasksSyncBits = FLASH_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT | OLED_INIT_EVENT |
 																 CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
@@ -2791,7 +2811,7 @@ void saveLoadTaskFunction(void *argument)
 		}
 
 		// Load configuration from flash memory
-		if (pdTRUE == xStatus && xNotification == SAVE_TO_FLASH) {
+		if (pdTRUE == xStatus && xNotification == LOAD_FROM_FLASH) {
 
 			// Load current configuration from flash
 			vLoadFromFlash((uint8_t *)&config, sizeof(config));
@@ -2799,6 +2819,11 @@ void saveLoadTaskFunction(void *argument)
 			// Update LED timer period
 			if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
 				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+			else {
+	  		printData.type = BLINK_PERIOD;
+	  		printData.value.ui = config.ulLedTimPeriod;
+	  		xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(50));
+			}
 
 			// Update OLED timer period
 			if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
