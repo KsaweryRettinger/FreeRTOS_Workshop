@@ -63,9 +63,10 @@ void Error_Handler(void);
 #define SHORT_DELAY 50
 #define DEL_CHAR 127
 #define INPUT_BUFFER_LEN 100
+#define QUEUE_SIZE 10
 #define OUTPUT_BUFFER_LEN 500
 #define NEWPAGE_CHAR 12
-#define QUEUE_SIZE 10
+#define LONG_DELAY 1000
 #define B1_Pin GPIO_PIN_13
 #define B1_GPIO_Port GPIOC
 #define B1_EXTI_IRQn EXTI15_10_IRQn
@@ -119,8 +120,6 @@ void Error_Handler(void);
 #define BUTTON_EVENT (0x01)
 #define MOTION_INT_EVENT (0x02)
 #define I2C_MEM_READ_EVENT (0x04)
-
-// Task synchronization (initialization)
 #define EVENT_HANDLER_INIT_EVENT (0x08)
 #define CPU_TEMP_INIT_EVENT (0x10)
 #define ACCEL_GYRO_INIT_EVENT (0x20)
@@ -132,7 +131,6 @@ void Error_Handler(void);
 #define SAVE_TO_FLASH (0x800)
 #define LOAD_FROM_FLASH (0x1000)
 #define FLASH_INIT_EVENT (0x2000)
-
 
 // CPU temperature readings
 #define VDD (3.3)

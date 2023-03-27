@@ -1415,8 +1415,10 @@ static inline BaseType_t xSendStringByStreamBuffer(StreamBufferHandle_t xStreamB
 	size_t xBytesSent = 0;
 	BaseType_t xStatus = pdFALSE;
 
-	if (0 == xDataLengthBytes)
+	if (0 == xDataLengthBytes) {
 		xDataLengthBytes = strlen(pvTxData);
+		xBytesToSend = xDataLengthBytes;
+	}
 
 	// Take mutex
 	xStatus = xSemaphoreTake(printStringMutex, xTicksToWait);
@@ -1650,7 +1652,7 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 		printValue.value.ui = xBlinkPeriod;
 		xQueueSend(blePrintDataQueueHandle, &printValue, 0);
 	} else {
-		strncat(pcWriteBuffer, "[cli] Chaning LED timer period failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+		strncat(pcWriteBuffer, "[cli] Changing LED timer period failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
 	}
 
 	return pdFALSE;
@@ -2154,7 +2156,8 @@ void cpuTempTaskFunction(void *argument)
 				// Send to OLED screen
 				printData.type = CPUTEMP;
 				printData.value.f = fCpuTemp;
-				xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+				if (eSuspended != eTaskGetState(oledTaskHandle))
+					xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
 
 				// Send to BT task
 				xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
@@ -2849,11 +2852,57 @@ void saveLoadTaskFunction(void *argument)
 void bleCliTaskFunction(void *argument)
 {
   /* USER CODE BEGIN bleCliTaskFunction */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+
+	// Task variables
+	BaseType_t xStatus = pdFALSE;
+	BaseType_t xNotification = 0;
+	uint8_t cInputBufferIndex = 0;
+	char cInputBuffer[INPUT_BUFFER_LEN] = {0};
+	char cOutputBuffer[OUTPUT_BUFFER_LEN] = {0};
+	char cRxChar = 0;
+	char cTxChar = 0;
+	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
+
+	// Take Rx semaphore and initiate DMA Rx transfer
+	HAL_UART_Receive_DMA(&huart1, (uint8_t*)&cRxChar, 1);
+
+	for(;;)
+	{
+		xNotification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SHORT_DELAY));
+		if (xNotification != 0)
+		{
+			cTxChar = cRxChar;
+			HAL_UART_Receive_DMA(&huart1, (uint8_t*)&cRxChar, 1);
+
+			if ('#' == cTxChar)
+			{
+				if (cInputBufferIndex > 0)
+				{
+					do {
+						xStatus = FreeRTOS_CLIProcessCommand(cInputBuffer, cOutputBuffer, OUTPUT_BUFFER_LEN);
+					} while (xStatus != pdFALSE);
+					memset(cInputBuffer, '\0', INPUT_BUFFER_LEN);
+					cInputBufferIndex = 0;
+				}
+			}
+			else {
+				if ('*' == cTxChar) {
+					cInputBufferIndex = 0;
+					memset(cInputBuffer, '\0', INPUT_BUFFER_LEN);
+				} else {
+					if (cInputBufferIndex < INPUT_BUFFER_LEN)
+						cInputBuffer[cInputBufferIndex++] = cTxChar;
+				}
+			}
+		}
+		else
+		{
+			uartState = HAL_UART_GetState(&huart1);
+			if (HAL_UART_STATE_ERROR == uartState)
+				Error_Handler();
+		}
+	}
+
   /* USER CODE END bleCliTaskFunction */
 }
 
@@ -2867,11 +2916,69 @@ void bleCliTaskFunction(void *argument)
 void blePrintTaskFunction(void *argument)
 {
   /* USER CODE BEGIN blePrintTaskFunction */
-  /* Infinite loop */
+
+	// Status variables
+	BaseType_t xStatus = pdFALSE;
+	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
+	HAL_StatusTypeDef halStatus = HAL_OK;
+
+	// Local buffers and data container
+	size_t xReceiveSize = 0;
+	char cSendBuffer[OUTPUT_BUFFER_LEN] = {0};
+	char cReceiveBuffer[OUTPUT_BUFFER_LEN] = {0};
+	Data_t printData = {0};
+
   for(;;)
   {
-    osDelay(1);
+		xStatus = xQueueReceive(blePrintDataQueueHandle, &printData, 0);
+		if (xStatus == pdTRUE) {
+			switch (printData.type) {
+				case BLINK_PERIOD:
+					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*B%lims*", printData.value.ui);
+					break;
+				case CPUTEMP:
+					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*C%.2fC*", printData.value.f);
+					break;
+				case DISTANCE:
+					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*D%limm*", printData.value.ui);
+					break;
+				case TEMPERATURE:
+					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*T%.1fC*", printData.value.f);
+					break;
+				case HUMIDITY:
+					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*H%.1f%%*", printData.value.f);
+					break;
+				case PITCHANDROLL:
+					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*PX%.1fY%.1f*", printData.value.pr[0], printData.value.pr[1]);
+					break;
+				default:
+					xStatus = pdFALSE;
+			}
+		}
+
+		// Transmit data to BT transmitter
+		if (pdTRUE == xStatus)
+		{
+			do {
+				xStatus = xSemaphoreTake(uart1TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+				if (xStatus == pdTRUE)
+				{
+					memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
+					halStatus = HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
+					if (halStatus != HAL_OK)
+						xSemaphoreGive(uart1TxSemHandle);
+				}
+				else
+				{
+					// Check UART for errors
+					uartState = HAL_UART_GetState(&huart1);
+					if (HAL_UART_STATE_ERROR == uartState)
+						Error_Handler();
+				}
+			} while (xStatus != pdTRUE);
+		}
   }
+
   /* USER CODE END blePrintTaskFunction */
 }
 
@@ -2885,11 +2992,43 @@ void blePrintTaskFunction(void *argument)
 void bleStrPrintTaskFunction(void *argument)
 {
   /* USER CODE BEGIN bleStrPrintTaskFunction */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+
+	BaseType_t xStatus = pdFALSE;
+	size_t xReceiveSize = 0;
+	char cReceiveBuffer[OUTPUT_BUFFER_LEN] = {0};
+	char cSendBuffer[OUTPUT_BUFFER_LEN] = {0};
+	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
+	HAL_StatusTypeDef halStatus = HAL_OK;
+
+	for(;;)
+	{
+		// Read stream buffer
+		xReceiveSize = xStreamBufferReceive(xStreamBufferStringBle, cReceiveBuffer, OUTPUT_BUFFER_LEN, portMAX_DELAY);
+
+		if (xReceiveSize > 0) {
+
+			// Wait for previous transmission to complete and take Tx semaphore
+			xStatus = xSemaphoreTake(uart1TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+
+			// Transmit bytes read from the stream buffer
+			if (pdTRUE == xStatus)
+			{
+				memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
+				halStatus = HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
+
+				// Ensure that API call was successful
+				if (halStatus != HAL_OK)
+					xSemaphoreGive(uart1TxSemHandle);
+			}
+			else
+			{
+				// Check USART state and call generic error handler in case of errors
+				uartState = HAL_UART_GetState(&huart1);
+				if (HAL_UART_STATE_ERROR == uartState)
+					Error_Handler();
+			}
+		}
+	}
   /* USER CODE END bleStrPrintTaskFunction */
 }
 
@@ -2903,10 +3042,64 @@ void bleStrPrintTaskFunction(void *argument)
 void blePanelTaskFunction(void *argument)
 {
   /* USER CODE BEGIN blePanelTaskFunction */
+	char *pcPanelSetup[] = {
+		"*.kwl\n",
+		"clear_panel()\n",
+		"set_grid_size(21,9)\n",
+		"add_text(11,4,large,L,Terminal,245,240,245,)\n",
+		"add_text(18,8,large,L,Reset system,245,240,245,)\n",
+		"add_text(8,0,large,L,CPU temp.,245,240,245,)\n",
+		"add_text_box(7,4,3,C,39.38C,245,240,245,C)\n",
+		"add_text(3,6,large,L,Distance,245,240,245,)\n",
+		"add_text_box(0,6,3,C,760mm,206,172,92,D)\n",
+		"add_text(3,3,large,L, Blink period,245,240,245,)\n",
+		"add_text(0,0,large,L,Blink period,245,240,245,)\n",
+		"add_text_box(0,3,3,C,373ms,0,240,0,B)\n",
+		"add_text(4,1,large,L,Led off,245,240,245,)\n",
+		"add_text(4,0,large,L,Led on,245,240,245,)\n",
+		"add_text(17,0,large,L,Humidity,245,240,245,)\n",
+		"add_text(19,0,large,L,Temp.,245,240,245,)\n",
+		"add_text_box(17,6,2,C,38.8%,0,0,245,H)\n",
+		"add_text_box(19,6,2,C,24.9C,245,0,0,T)\n",
+		"add_text(9,5,large,L,Oled,245,240,245,)\n",
+		"add_text(7,8,large,L,Save,245,240,245,)\n",
+		"add_text(7,5,large,L,Load,245,240,245,*)\n",
+		"add_button(17,8,14,*reset#,)\n",
+		"add_button(7,0,15,*temp#,)\n",
+		"add_button(3,1,17,*led off#,)\n",
+		"add_button(3,0,16,*led on#,)\n",
+		"add_button(7,6,2,*load#,)\n",
+		"add_button(7,7,3,*save#,)\n",
+		"add_switch(9,6,3,*oled on#,*oled off#,0,0)\n",
+		"add_slider(0,1,6,10,500,373,*blink ,#,0)\n",
+		"add_gauge(0,7,4,0,2000,760,D,0mm,2000mm,10,5)\n",
+		"add_gauge(7,1,1,0,100,39,C,0C,100C,10,2)\n",
+		"add_gauge(0,4,5,0,500,373,B,0ms,500ms,10,5)\n",
+		"add_gauge(17,1,3,0,100,38,H,0%,100%,10,5)\n",
+		"add_gauge(19,1,2,0,100,24,T,OC,100C,10,2)\n",
+		"add_xy_graph(11,0,6,-90.0,90.0,-180.0,180.0,5,P,Pitch & Roll,Roll,Pitch,0,0,0,0,1,1,0,1,1,wide,large,1,PR,255,0,0)\n",
+		"add_monitor(11,5,5,,1)\n",
+		"add_send_box(11,8,5,,*,#)\n",
+		"set_panel_notes(-,,,)\n",
+		"run()\n",
+		"*\n"
+	};
+
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    vTaskSuspend(NULL);
+
+    // Pause sending data to app during setup
+    vTaskSuspend(blePrintTaskHandle);
+
+    for (size_t i = 0; i < (sizeof(pcPanelSetup)/sizeof(char *)); i++) {
+    	xSendStringByStreamBuffer(xStreamBufferStringBle, blePrintStringMutexHandle, pcPanelSetup[i], 0, pdMS_TO_TICKS(LONG_DELAY));
+    	vTaskDelay(pdMS_TO_TICKS(STD_DELAY));
+    }
+
+    // Resume printing to app
+    vTaskResume(blePrintTaskHandle);
   }
   /* USER CODE END blePanelTaskFunction */
 }
