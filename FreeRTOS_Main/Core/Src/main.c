@@ -1558,7 +1558,7 @@ static void vSaveToFlash(uint8_t *src, size_t size) {
 	// Unlock flash and clear all flags
 	HAL_FLASH_Unlock();
 	__HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
-												 FLASH_FLAG_PGAERR | FLASH_FLAG_RDERR | FLASH_FLAG_RDERR | FLASH_FLAG_BSY);
+												 FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_RDERR | FLASH_FLAG_BSY);
 
 	// Erase flash sector 7
 	HAL_FLASHEx_Erase(&flashErase, &SectorErr);
@@ -2790,16 +2790,18 @@ void saveLoadTaskFunction(void *argument)
 	vLoadFromFlash((uint8_t *)&config, sizeof(config));
 
 	// Update LED timer period
-	if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
-		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+	if (config.ulLedTimPeriod > 0) {
+		if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
+			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+	}
 
-	// Update OLED timer period
-	if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
-			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing OLED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
-
-	// Reset OLED timer
-	if (pdFAIL == xTimerReset(oledTimHandle, pdMS_TO_TICKS(100)))
-		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] OLED timer reset failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+	// Update OLED timer period and reset timer
+	if (config.ulOledTimPeriod > 0) {
+		if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
+				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing OLED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+		if (pdFAIL == xTimerReset(oledTimHandle, pdMS_TO_TICKS(100)))
+			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] OLED timer reset failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+	}
 
 	for(;;)
   {
@@ -2930,7 +2932,7 @@ void blePrintTaskFunction(void *argument)
 
   for(;;)
   {
-		xStatus = xQueueReceive(blePrintDataQueueHandle, &printData, 0);
+		xStatus = xQueueReceive(blePrintDataQueueHandle, &printData, portMAX_DELAY);
 		if (xStatus == pdTRUE) {
 			switch (printData.type) {
 				case BLINK_PERIOD:
