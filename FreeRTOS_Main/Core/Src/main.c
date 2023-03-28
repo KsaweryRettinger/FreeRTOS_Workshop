@@ -2449,6 +2449,7 @@ void oledTaskFunction(void *argument)
 
 	// Set default timer period to 10s
 	xStatus = xTimerChangePeriod(oledTimHandle, pdMS_TO_TICKS(10000), pdMS_TO_TICKS(100));
+	xTimerStop(oledTimHandle, 0);
 	if (pdFAIL == xStatus)
 		xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[oledTask] Unable to set OLED screen timeout\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
 
@@ -2790,25 +2791,6 @@ void saveLoadTaskFunction(void *argument)
 
 	// Synchronize task initialization
 	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
-
-	// Load current configuration from flash
-	vLoadFromFlash((uint8_t *)&config, sizeof(config));
-
-	// Update LED timer period
-	if (config.ulLedTimPeriod > 0) {
-		if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
-			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
-		xTimerStop(ledTimHandle, 0);
-	}
-
-	// Update OLED timer period and reset timer
-	if (config.ulOledTimPeriod > 0) {
-		if (pdFAIL == xTimerChangePeriod(oledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
-				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing OLED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
-		if (pdFAIL == xTimerReset(oledTimHandle, pdMS_TO_TICKS(100)))
-			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] OLED timer reset failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
-		xTimerStop(oledTimHandle, 0);
-	}
 
 	for(;;)
   {
