@@ -507,4 +507,3 @@ VP_TIM5_VS_ClockSourceINT.Signal=TIM5_VS_ClockSourceINT
 board=NUCLEO-F446RE
 boardIOC=true
 rtos.0.ip=FREERTOS
-isbadioc=false

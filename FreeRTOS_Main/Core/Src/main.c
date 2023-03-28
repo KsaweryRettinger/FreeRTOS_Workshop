@@ -1643,16 +1643,21 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
 	xBlinkPeriod = (uint32_t)atoi(pcParameter1);
 
-	// Abort LED task delay
-	snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting LED blinking timer period to %lu ms\r\n", xBlinkPeriod);
+	if (xBlinkPeriod > 0) {
 
-	// Set new timer period
-	if (pdPASS == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(xBlinkPeriod), 0)) {
-		printValue.type = BLINK_PERIOD;
-		printValue.value.ui = xBlinkPeriod;
-		xQueueSend(blePrintDataQueueHandle, &printValue, 0);
+		// Abort LED task delay
+		snprintf(pcWriteBuffer, xWriteBufferLen, "[cli] Setting LED blinking timer period to %lu ms\r\n", xBlinkPeriod);
+
+		// Set new timer period
+		if (pdPASS == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(xBlinkPeriod), 0)) {
+			printValue.type = BLINK_PERIOD;
+			printValue.value.ui = xBlinkPeriod;
+			xQueueSend(blePrintDataQueueHandle, &printValue, 0);
+		} else {
+			strncat(pcWriteBuffer, "[cli] Changing LED timer period failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+		}
 	} else {
-		strncat(pcWriteBuffer, "[cli] Changing LED timer period failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+		strncat(pcWriteBuffer, "[cli] Invalid setting, timer period must be > 0\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
 	}
 
 	return pdFALSE;
@@ -2793,14 +2798,16 @@ void saveLoadTaskFunction(void *argument)
 	if (config.ulLedTimPeriod > 0) {
 		if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
 			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+		xTimerStop(ledTimHandle, 0);
 	}
 
 	// Update OLED timer period and reset timer
 	if (config.ulOledTimPeriod > 0) {
-		if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
+		if (pdFAIL == xTimerChangePeriod(oledTimHandle, pdMS_TO_TICKS(config.ulOledTimPeriod), pdMS_TO_TICKS(100)))
 				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing OLED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
 		if (pdFAIL == xTimerReset(oledTimHandle, pdMS_TO_TICKS(100)))
 			xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] OLED timer reset failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
+		xTimerStop(oledTimHandle, 0);
 	}
 
 	for(;;)
