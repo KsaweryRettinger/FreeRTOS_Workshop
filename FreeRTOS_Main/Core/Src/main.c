@@ -1113,7 +1113,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
+  huart1.Init.BaudRate = 9600;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -2854,7 +2854,7 @@ void bleCliTaskFunction(void *argument)
 	char cTxChar = 0;
 	HAL_UART_StateTypeDef uartState = HAL_UART_STATE_READY;
 
-	// Take Rx semaphore and initiate DMA Rx transfer
+	// Initiate DMA Rx transfer
 	HAL_UART_Receive_DMA(&huart1, (uint8_t*)&cRxChar, 1);
 
 	for(;;)
@@ -2922,7 +2922,9 @@ void blePrintTaskFunction(void *argument)
   for(;;)
   {
 		xStatus = xQueueReceive(blePrintDataQueueHandle, &printData, portMAX_DELAY);
-		if (xStatus == pdTRUE) {
+		if (pdTRUE == xStatus) {
+			memset(cReceiveBuffer, '\0', OUTPUT_BUFFER_LEN);
+
 			switch (printData.type) {
 				case BLINK_PERIOD:
 					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*B%lims*", printData.value.ui);
@@ -2952,8 +2954,10 @@ void blePrintTaskFunction(void *argument)
 		{
 			do {
 				xStatus = xSemaphoreTake(uart1TxSemHandle, pdMS_TO_TICKS(STD_DELAY));
+
 				if (xStatus == pdTRUE)
 				{
+					memset(cSendBuffer, '\0', OUTPUT_BUFFER_LEN);
 					memcpy(cSendBuffer, cReceiveBuffer, xReceiveSize);
 					halStatus = HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cSendBuffer, (uint16_t)xReceiveSize);
 					if (halStatus != HAL_OK)
