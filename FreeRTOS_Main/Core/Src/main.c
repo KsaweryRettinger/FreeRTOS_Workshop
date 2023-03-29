@@ -113,6 +113,7 @@ SPI_HandleTypeDef hspi2;
 DMA_HandleTypeDef hdma_spi2_tx;
 
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
 DMA_HandleTypeDef hdma_tim1_ch1;
@@ -237,6 +238,13 @@ const osThreadAttr_t blePanelTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for motorsTask */
+osThreadId_t motorsTaskHandle;
+const osThreadAttr_t motorsTask_attributes = {
+  .name = "motorsTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for printStringQueue */
 osMessageQueueId_t printStringQueueHandle;
 const osMessageQueueAttr_t printStringQueue_attributes = {
@@ -256,6 +264,11 @@ const osMessageQueueAttr_t oledDataQueue_attributes = {
 osMessageQueueId_t blePrintDataQueueHandle;
 const osMessageQueueAttr_t blePrintDataQueue_attributes = {
   .name = "blePrintDataQueue"
+};
+/* Definitions for joyDataQueue */
+osMessageQueueId_t joyDataQueueHandle;
+const osMessageQueueAttr_t joyDataQueue_attributes = {
+  .name = "joyDataQueue"
 };
 /* Definitions for tempHumTim */
 osTimerId_t tempHumTimHandle;
@@ -351,6 +364,7 @@ static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_TIM2_Init(void);
 void StartDefaultTask(void *argument);
 void cliTaskFunction(void *argument);
 void streamPrintTaskFunction(void *argument);
@@ -367,6 +381,7 @@ void bleCliTaskFunction(void *argument);
 void blePrintTaskFunction(void *argument);
 void bleStrPrintTaskFunction(void *argument);
 void blePanelTaskFunction(void *argument);
+void motorsTaskFunction(void *argument);
 void tempHumTimCallback(void *argument);
 void oledTimCallback(void *argument);
 void ledTimCallback(void *argument);
@@ -511,6 +526,7 @@ int main(void)
   MX_TIM5_Init();
   MX_TIM1_Init();
   MX_USART1_UART_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
   // Create and reset stream buffer for printing CLI output with trigger level 1
@@ -584,6 +600,9 @@ int main(void)
   /* creation of blePrintDataQueue */
   blePrintDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &blePrintDataQueue_attributes);
 
+  /* creation of joyDataQueue */
+  joyDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &joyDataQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -636,6 +655,9 @@ int main(void)
 
   /* creation of blePanelTask */
   blePanelTaskHandle = osThreadNew(blePanelTaskFunction, NULL, &blePanelTask_attributes);
+
+  /* creation of motorsTask */
+  motorsTaskHandle = osThreadNew(motorsTaskFunction, NULL, &motorsTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -977,6 +999,73 @@ static void MX_TIM1_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
   * @brief TIM4 Initialization Function
   * @param None
   * @retval None
@@ -1226,28 +1315,22 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(OLED_RES_GPIO_Port, OLED_RES_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, OLED_RES_Pin|M1_EN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, OLED_CS_Pin|OLED_DC_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(M2_EN_GPIO_Port, M2_EN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : OLED_RES_Pin */
   GPIO_InitStruct.Pin = OLED_RES_Pin;
@@ -1268,6 +1351,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(MOTION_INT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : M1_EN_Pin */
+  GPIO_InitStruct.Pin = M1_EN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(M1_EN_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : M2_EN_Pin */
+  GPIO_InitStruct.Pin = M2_EN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(M2_EN_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 5, 0);
@@ -3097,6 +3194,24 @@ void blePanelTaskFunction(void *argument)
     vTaskResume(blePrintTaskHandle);
   }
   /* USER CODE END blePanelTaskFunction */
+}
+
+/* USER CODE BEGIN Header_motorsTaskFunction */
+/**
+* @brief Function implementing the motorsTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_motorsTaskFunction */
+void motorsTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN motorsTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END motorsTaskFunction */
 }
 
 /* tempHumTimCallback function */
