@@ -210,6 +210,10 @@ void Error_Handler(void);
 // Flash memory
 #define FLASH_SECTOR7_ADDR (0x08060000);
 
+// Motor control
+#define PWM_FREQ (100)
+#define MAXIMUM_TILT (30)
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

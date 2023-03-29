@@ -50,7 +50,9 @@ typedef enum {
 	DISTANCE,
 	TEMPERATURE,
 	HUMIDITY,
-	PITCHANDROLL
+	PITCHANDROLL,
+	JOYSTICK,
+	MOTORS
 } eDataType;
 
 // Union for sending different data types via queue
@@ -59,6 +61,8 @@ typedef union {
 	uint8_t uc;
 	float f;
 	float pr[2];
+	uint32_t joy[2];
+	uint32_t motors[2];
 } unDataValue;
 
 // Structure that encapsulates data sent via queue
@@ -395,6 +399,23 @@ static inline BaseType_t xSendStringByStreamBuffer(StreamBufferHandle_t xStreamB
 																						 size_t xDataLengthBytes,
 																						 TickType_t xTicksToWait);
 
+// Functions for sending strings via queue
+static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
+static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, QueueHandle_t printStringQueue, char *pcPrintString, ...);
+
+// Functions for MPU6050 accelerometer communication
+static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
+static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
+static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t setValue, uint8_t valueMask);
+static BaseType_t xAccelGyroInit(void);
+
+// Functions for saving/loading data from flash memory
+static void vSaveToFlash(uint8_t *src, size_t size);
+static void vLoadFromFlash(uint8_t *dst, size_t size);
+
+// Function for calculating jostick vector length
+static int32_t vectorLength(int32_t X, int32_t Y);
+
 // FreeRTOS CLI callback functions
 BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
@@ -407,20 +428,7 @@ BaseType_t prvOledPeriodCommand(char *pcWriteBuffer, size_t xWriteBufferLen, con
 BaseType_t prvSaveCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvPanelCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
-
-// Utility functions for sending strings via queue
-static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock);
-static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, QueueHandle_t printStringQueue, char *pcPrintString, ...);
-
-// Utility functions for MPU6050 accelerometer communication
-static BaseType_t xAccelGyroMemRead(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
-static BaseType_t xAccelGyroMemWrite(uint16_t MemAddress, uint16_t MemAddSize, uint8_t *pData, uint16_t Size);
-static BaseType_t xAccelGyroSetValue(uint16_t MemAddress, uint8_t setValue, uint8_t valueMask);
-static BaseType_t xAccelGyroInit(void);
-
-// Utility functions for saving/loading data from flash memory
-static void vSaveToFlash(uint8_t *src, size_t size);
-static void vLoadFromFlash(uint8_t *dst, size_t size);
+BaseType_t prvJoyCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 /* USER CODE END PFP */
 
@@ -472,6 +480,10 @@ const CLI_Command_Definition_t xPanelCommand = {.pcCommand = "panel",
 																								.pcHelpString = "panel:\r\n Sends panel configuration to BLE phone app\r\n",
 																								.pxCommandInterpreter = prvPanelCommand,
 																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xJoyCommand = {.pcCommand = "joy",
+																								.pcHelpString = "joy:\r\n Controls motors power: joy X<value>Y<value>\r\n",
+																								.pxCommandInterpreter = prvJoyCommand,
+																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
 
@@ -504,6 +516,7 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xSaveCommand);
   FreeRTOS_CLIRegisterCommand(&xLoadCommand);
   FreeRTOS_CLIRegisterCommand(&xPanelCommand);
+  FreeRTOS_CLIRegisterCommand(&xJoyCommand);
 
   /* USER CODE END Init */
 
@@ -1691,14 +1704,30 @@ BaseType_t prvClearCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	return pdFALSE;
 }
 
+static int32_t vectorLength(int32_t X, int32_t Y) {
+
+	int32_t length = sqrt((X * X) + (Y * Y));
+
+	if (length > 100)
+		return 100;
+	else
+		return length;
+}
+
 // FreeRTOS CLI "led" command
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 
 	BaseType_t xParameter1StringLength = 0;
 	const char *pcParameter1 = NULL;
+	TimerCallback_t *pLedTimerCallback = NULL;
+	BaseType_t *pxLedStatus = NULL;
 
 	// Get first parameter - LED on/off
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
+
+	// Get LED timer status from timer callback argument
+	pLedTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(ledTimHandle);
+	pxLedStatus = pLedTimerCallback->arg;
 
 	// Interpret command
 	if (strncmp(pcParameter1, "on", xParameter1StringLength) == 0)
@@ -1708,6 +1737,9 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 			strncpy(pcWriteBuffer, "[cli] Starting LED timer\r\n", xWriteBufferLen);
 			if (pdFAIL == xTimerStart(ledTimHandle, 0))
 				strncat(pcWriteBuffer, "[cli] Starting LED timer failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
+
+			// Update LED status
+			*pxLedStatus = pdTRUE;
 		}
 	}
 	else if (strncmp(pcParameter1, "off", xParameter1StringLength) == 0)
@@ -1717,7 +1749,10 @@ BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 			strncpy(pcWriteBuffer, "[cli] Stopping LED timer\r\n", xWriteBufferLen);
 			if (pdFAIL == xTimerStop(ledTimHandle, 0))
 				strncat(pcWriteBuffer, "[cli] Stopping LED timer failed\r\n", xWriteBufferLen - strnlen(pcWriteBuffer, xWriteBufferLen));
-			HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+
+			// Update LED status and disable PWM
+			*pxLedStatus = pdFALSE;
+			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
 		}
 	}
 	else
@@ -1735,10 +1770,16 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 	const char *pcParameter1 = NULL;
 	BaseType_t xBlinkPeriod = 0;
 	Data_t printValue = {0};
+	TimerCallback_t *pLedTimerCallback = NULL;
+	BaseType_t *pxLedStatus = NULL;
 
 	// Get first parameter - LED blink period in ms
 	pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
 	xBlinkPeriod = (uint32_t)atoi(pcParameter1);
+
+	// Get LED timer status from timer callback argument
+	pLedTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(ledTimHandle);
+	pxLedStatus = pLedTimerCallback->arg;
 
 	if (xBlinkPeriod > 0) {
 
@@ -1747,6 +1788,7 @@ BaseType_t prvBlinkCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const ch
 
 		// Set new timer period
 		if (pdPASS == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(xBlinkPeriod), 0)) {
+			*pxLedStatus = pdTRUE;
 			printValue.type = BLINK_PERIOD;
 			printValue.value.ui = xBlinkPeriod;
 			xQueueSend(blePrintDataQueueHandle, &printValue, 0);
@@ -1886,6 +1928,36 @@ BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 BaseType_t prvPanelCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
 	vTaskResume(blePanelTaskHandle);
 	strncpy(pcWriteBuffer, "[cli] Resuming blePanelTask\r\n", xWriteBufferLen);
+	return pdFALSE;
+}
+
+BaseType_t prvJoyCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	BaseType_t xParameter1StringLength = 0;
+	const char *pcParameter1 = NULL;
+	char cXStringValue[4] = {0};
+	char cYStringValue[4] = {0};
+	char *pcValue = &cXStringValue[0];
+	Data_t joyValue = {0};
+
+	// Get jostick X and Y positions
+	if (eSuspended != eTaskGetState(motorsTaskHandle)) {
+		pcParameter1 = FreeRTOS_CLIGetParameter(pcCommandString, 1, &xParameter1StringLength);
+		for (size_t i = 1; i < xParameter1StringLength; i++) {
+			if (pcParameter1[i] == 'Y') {
+				pcValue = &cYStringValue[0];
+				continue;
+			}
+			*pcValue++ = pcParameter1[i];
+		}
+
+		// Save to data structure and send to motors task
+		joyValue.type = JOYSTICK;
+		joyValue.value.joy[0] = atoi(cXStringValue) - 100;
+		joyValue.value.joy[1] = atoi(cYStringValue) - 100;
+		xQueueSend(joyDataQueueHandle, &joyValue, 0);
+	}
+
 	return pdFALSE;
 }
 
@@ -2886,6 +2958,13 @@ void saveLoadTaskFunction(void *argument)
 	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT | OLED_INIT_EVENT |
 																 CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
 
+	BaseType_t xLedStatus = pdFALSE;
+	TimerCallback_t *pLedTimerCallback = NULL;
+
+	// Get LED timer status from timer callback argument
+	pLedTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(ledTimHandle);
+	pLedTimerCallback->arg = &xLedStatus;
+
 	// Synchronize task initialization
 	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 
@@ -2911,6 +2990,7 @@ void saveLoadTaskFunction(void *argument)
 			if (pdFAIL == xTimerChangePeriod(ledTimHandle, pdMS_TO_TICKS(config.ulLedTimPeriod), pdMS_TO_TICKS(100)))
 				xSendStringByStreamBuffer(xStreamBufferString, printStringMutexHandle, "[saveLoadTask] Changing LED timer period failed\r\n", 0, pdMS_TO_TICKS(STD_DELAY));
 			else {
+				xLedStatus = pdTRUE;
 	  		printData.type = BLINK_PERIOD;
 	  		printData.value.ui = config.ulLedTimPeriod;
 	  		xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(50));
@@ -3241,7 +3321,11 @@ void oledTimCallback(void *argument)
 void ledTimCallback(void *argument)
 {
   /* USER CODE BEGIN ledTimCallback */
-	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+	if (__HAL_TIM_GET_COMPARE(&htim2, TIM_CHANNEL_1))
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+	else
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, PWM_FREQ);
+
   /* USER CODE END ledTimCallback */
 }
 
