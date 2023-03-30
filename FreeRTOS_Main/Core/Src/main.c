@@ -483,7 +483,7 @@ const CLI_Command_Definition_t xPanelCommand = {.pcCommand = "panel",
 const CLI_Command_Definition_t xJoyCommand = {.pcCommand = "joy",
 																								.pcHelpString = "joy:\r\n Controls motors power: joy X<value>Y<value>\r\n",
 																								.pxCommandInterpreter = prvJoyCommand,
-																								.cExpectedNumberOfParameters = 0 };
+																								.cExpectedNumberOfParameters = 1 };
 
 /* USER CODE END 0 */
 
