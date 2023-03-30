@@ -2663,9 +2663,6 @@ void oledTaskFunction(void *argument)
   				ssd1331_display_string(0, 13, (uint8_t *)cText, FONT_1206, BLUE);
   				break;
 
-  			case PITCHANDROLL:
-  				break;
-
   			case DISTANCE:
   				// Clear 12 rows starting from row 26 and distance sensor reading at 0,26
   				snprintf(cText, sizeof(cText), "Distance: %lucm", printData.value.ui);
@@ -2684,7 +2681,7 @@ void oledTaskFunction(void *argument)
   				// Clear 12 rows starting from row 52 and print humidity at 0,52
   				snprintf(cText, sizeof(cText), "Humidity: %.1f", printData.value.f);
   				memset(&screenBuffer[52], 0x0, OLED_SCREEN_WIDTH * 12 * sizeof(uint16_t));
-  				ssd1331_display_string(0, 52, (uint8_t *)cText, FONT_1206, YELLOW);
+  				ssd1331_display_string(0, 52, (uint8_t *)cText, FONT_1206, PURPLE);
   				break;
 
   			case BLINK_PERIOD:
@@ -2727,6 +2724,15 @@ void oledTaskFunction(void *argument)
   				// Add delay and clear screen
   			  vTaskDelay(pdMS_TO_TICKS(3000));
   				ssd1331_clear_screen(BLACK);
+  				break;
+
+  			case PITCHANDROLL:
+  				break;
+
+  			case JOYSTICK:
+  				break;
+
+  			case MOTORS:
   				break;
   		}
   	}
@@ -3316,6 +3322,19 @@ void motorsTaskFunction(void *argument)
 {
   /* USER CODE BEGIN motorsTaskFunction */
 
+	uint32_t freq = PWM_FREQ;
+	uint32_t arr = freq - 1;
+	uint32_t psc = ((SystemCoreClock / (arr + 1)) / freq) - 1; // 100 timer ticks = 1 PWM period
+	Data_t blePrintData = {.type = MOTORS};
+	Data_t joyData = {0};
+	int32_t X = 0;
+	int32_t Y = 0;
+	BaseType_t xStatus = pdFALSE;
+	int32_t leftMotors = 0;
+	int32_t leftMotorsDir = 0;
+	int32_t rightMotors = 0;
+	int32_t rightMotorsDir = 0;
+
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = MOTORS_INIT_EVENT;
 	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
@@ -3326,18 +3345,111 @@ void motorsTaskFunction(void *argument)
 																 DIST_TRIGGER_INIT_EVENT |
 																 CPU_TEMP_INIT_EVENT);
 
-	// Text buffer and string data
-	char cText[OUTPUT_BUFFER_LEN] = {0};
-	Data_t printData = {0};
+	// LED timer callback and status
+	TimerCallback_t *pLedTimerCallback = NULL;
+	BaseType_t *pxLedStatus = NULL;
+
+	// Setup PWM presacler and autoreload
+	__HAL_TIM_SET_PRESCALER(&htim2, psc);
+	__HAL_TIM_SET_AUTORELOAD(&htim2, arr);
+
+	// Start PWM on all 3 channels
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
 
 	// Synchronize task initialization
 	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 
-	/* Infinite loop */
-  for(;;)
+	// Get LED status
+	pLedTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(ledTimHandle);
+	pxLedStatus = pLedTimerCallback->arg;
+
+	for(;;)
   {
-    osDelay(1);
-  }
+    xStatus = xQueueReceive(joyDataQueueHandle, &joyData, pdMS_TO_TICKS(100));
+
+    if (pdTRUE == xStatus) {
+
+    	// Joystick readings
+    	X = joyData.value.joy[0];
+    	Y = joyData.value.joy[1];
+
+    	// Calculate motor power
+    	if (Y >= 0) {
+    		if (X >= 0) {
+    			// Top right quarter
+    			leftMotors = vectorLength(X, Y);
+    			rightMotors = Y - X;
+    		} else {
+    			// Top left quarter
+    			leftMotors = Y - (-X);
+    			rightMotors = vectorLength(X, Y);
+    		}
+    	} else {
+    		if (X >= 0) {
+    			// Bottom right quarter
+    			leftMotors = Y + X;
+    			rightMotors = -(vectorLength(X, Y));
+    		} else {
+    			// Bottom left quarter
+    			leftMotors = -(vectorLength(X, Y));
+    			rightMotors = Y + -(X);
+    		}
+    	}
+
+    	// Set motor direction
+    	if (leftMotors >= 0) {
+    		leftMotorsDir = GPIO_PIN_RESET;
+    		blePrintData.value.motors[0] = 100 + leftMotors;
+    	} else {
+    		leftMotors = -leftMotors;
+    		leftMotorsDir = GPIO_PIN_SET;
+    		blePrintData.value.motors[0] = 100 - leftMotors;
+    	}
+
+    	if (rightMotors >= 0) {
+    		rightMotorsDir = GPIO_PIN_RESET;
+    		blePrintData.value.motors[1] = 100 + rightMotors;
+    	} else {
+    		rightMotors = -rightMotors;
+    		rightMotorsDir = GPIO_PIN_SET;
+    		blePrintData.value.motors[1] = 100 - rightMotors;
+    	}
+
+      // Set motor PWM
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, leftMotors);
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, rightMotors);
+
+      // Set motor direction
+      HAL_GPIO_WritePin(M2_EN_GPIO_Port, M2_EN_Pin, leftMotorsDir);
+      HAL_GPIO_WritePin(M1_EN_GPIO_Port, M1_EN_Pin, rightMotorsDir);
+
+      // Update LED timer and PWM
+      if (*pxLedStatus == pdTRUE && xTimerIsTimerActive(ledTimHandle) == pdTRUE)
+      	xTimerStop(ledTimHandle, pdMS_TO_TICKS(SHORT_DELAY));
+
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (leftMotors + rightMotors) / 2);
+
+			} else {
+
+				// Switch off motors
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+				__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
+
+				// Set motor values to default
+				blePrintData.value.motors[0] = 100;
+				blePrintData.value.motors[1] = 100;
+
+				// Switch LED blinking back on
+	      if (*pxLedStatus == pdTRUE && xTimerIsTimerActive(ledTimHandle) == pdFALSE)
+	      	xTimerStart(ledTimHandle, pdMS_TO_TICKS(SHORT_DELAY));
+			}
+
+		// Send motor data to BT app
+		xQueueSend(blePrintDataQueueHandle, &blePrintData, pdMS_TO_TICKS(SHORT_DELAY));
+	}
+
   /* USER CODE END motorsTaskFunction */
 }
 
