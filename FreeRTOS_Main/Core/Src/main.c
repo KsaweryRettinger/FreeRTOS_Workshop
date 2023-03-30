@@ -1954,7 +1954,7 @@ BaseType_t prvJoyCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 		// Save to data structure and send to motors task
 		joyValue.type = JOYSTICK;
 		joyValue.value.joy[0] = atoi(cXStringValue) - 100;
-		joyValue.value.joy[1] = atoi(cYStringValue) - 100;
+		joyValue.value.joy[1] = -(atoi(cYStringValue) - 100);
 		xQueueSend(joyDataQueueHandle, &joyValue, 0);
 	}
 
@@ -2295,8 +2295,13 @@ void cpuTempTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = CPU_TEMP_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
+																 EVENT_HANDLER_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT |
+																 DIST_INIT_EVENT |
+																 DIST_TRIGGER_INIT_EVENT |
+																 MOTORS_INIT_EVENT);
 
 	// Text buffer and string data
 	char cText[OUTPUT_BUFFER_LEN] = {0};
@@ -2373,8 +2378,13 @@ void accelGyroTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = ACCEL_GYRO_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
-																 OLED_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
+																 EVENT_HANDLER_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT |
+																 OLED_INIT_EVENT |
+																 DIST_INIT_EVENT |
+																 DIST_TRIGGER_INIT_EVENT |
+																 MOTORS_INIT_EVENT);
 
 	// Synchronize task initialization
 	xEventGroupWaitBits(commonEventHandle, OLED_INIT_EVENT, pdFALSE, pdTRUE, pdMS_TO_TICKS(STD_DELAY));
@@ -2475,8 +2485,13 @@ void eventTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = EVENT_HANDLER_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | DIST_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
+																 DIST_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT |
+																 DIST_TRIGGER_INIT_EVENT |
+																 MOTORS_INIT_EVENT);
 
 	// OLED timer callback and number of timeout events
 	TimerCallback_t *pOledTimerCallback = NULL;
@@ -2575,8 +2590,13 @@ void oledTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = OLED_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | CPU_TEMP_INIT_EVENT |
-																 ACCEL_GYRO_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
+																 EVENT_HANDLER_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT |
+																 DIST_INIT_EVENT |
+																 DIST_TRIGGER_INIT_EVENT |
+																 MOTORS_INIT_EVENT);
 
 	// Timer callback and counter of timeout events
 	TimerCallback_t* pOledTimerCallback = NULL;
@@ -2733,8 +2753,13 @@ void distTaskFunction(void *argument)
 
 	// Task synchronization bits
 	EventBits_t uxThisTasksSyncBits = DIST_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
+																 EVENT_HANDLER_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT |
+																 DIST_TRIGGER_INIT_EVENT |
+																 MOTORS_INIT_EVENT);
 
 	// Start circular DMA transfer for input capture timer
 	HAL_TIM_IC_Start_DMA(&htim5, TIM_CHANNEL_1, xEchoRead, 2);
@@ -2790,8 +2815,13 @@ void distTriggerFunction(void *argument)
 	// Task synchronization bits
 	EventBits_t xEventGroupValue = 0;
 	EventBits_t uxThisTasksSyncBits = DIST_TRIGGER_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT | EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT |
-																 OLED_INIT_EVENT | CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
+																 EVENT_HANDLER_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT |
+																 DIST_INIT_EVENT |
+																 MOTORS_INIT_EVENT);
 
 	// Setup trigger timer (one pulse PWM)
 	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1);
@@ -2955,8 +2985,13 @@ void saveLoadTaskFunction(void *argument)
 	Config_t config = {0};
 	Data_t printData = {0};
 	EventBits_t uxThisTasksSyncBits = FLASH_INIT_EVENT;
-	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT | ACCEL_GYRO_INIT_EVENT | OLED_INIT_EVENT |
-																 CPU_TEMP_INIT_EVENT | DIST_INIT_EVENT | DIST_TRIGGER_INIT_EVENT);
+	EventBits_t uxBitsToWaitFor = (EVENT_HANDLER_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT |
+																 DIST_INIT_EVENT |
+																 DIST_TRIGGER_INIT_EVENT |
+																 MOTORS_INIT_EVENT);
 
 	BaseType_t xLedStatus = pdFALSE;
 	TimerCallback_t *pLedTimerCallback = NULL;
@@ -3121,6 +3156,9 @@ void blePrintTaskFunction(void *argument)
 				case PITCHANDROLL:
 					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*PX%.1fY%.1f*", printData.value.pr[0], printData.value.pr[1]);
 					break;
+				case MOTORS:
+					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*L%lu**R%lu*", printData.value.motors[0], printData.value.motors[1]);
+					break;
 				default:
 					xStatus = pdFALSE;
 			}
@@ -3218,40 +3256,31 @@ void blePanelTaskFunction(void *argument)
 		"*.kwl\n",
 		"clear_panel()\n",
 		"set_grid_size(21,9)\n",
-		"add_text(11,4,large,L,Terminal,245,240,245,)\n",
-		"add_text(18,8,large,L,Reset system,245,240,245,)\n",
-		"add_text(8,0,large,L,CPU temp.,245,240,245,)\n",
-		"add_text_box(7,4,3,C,39.38C,245,240,245,C)\n",
-		"add_text(3,6,large,L,Distance,245,240,245,)\n",
-		"add_text_box(0,6,3,C,760mm,206,172,92,D)\n",
-		"add_text(3,3,large,L, Blink period,245,240,245,)\n",
-		"add_text(0,0,large,L,Blink period,245,240,245,)\n",
-		"add_text_box(0,3,3,C,373ms,0,240,0,B)\n",
-		"add_text(4,1,large,L,Led off,245,240,245,)\n",
-		"add_text(4,0,large,L,Led on,245,240,245,)\n",
-		"add_text(17,0,large,L,Humidity,245,240,245,)\n",
-		"add_text(19,0,large,L,Temp.,245,240,245,)\n",
-		"add_text_box(17,6,2,C,38.8%,0,0,245,H)\n",
-		"add_text_box(19,6,2,C,24.9C,245,0,0,T)\n",
-		"add_text(9,5,large,L,Oled,245,240,245,)\n",
-		"add_text(7,8,large,L,Save,245,240,245,)\n",
-		"add_text(7,5,large,L,Load,245,240,245,*)\n",
-		"add_button(17,8,14,*reset#,)\n",
-		"add_button(7,0,15,*temp#,)\n",
-		"add_button(3,1,17,*led off#,)\n",
-		"add_button(3,0,16,*led on#,)\n",
-		"add_button(7,6,2,*load#,)\n",
-		"add_button(7,7,3,*save#,)\n",
-		"add_switch(9,6,3,*oled on#,*oled off#,0,0)\n",
-		"add_slider(0,1,6,10,500,373,*blink ,#,0)\n",
-		"add_gauge(0,7,4,0,2000,760,D,0mm,2000mm,10,5)\n",
-		"add_gauge(7,1,1,0,100,39,C,0C,100C,10,2)\n",
-		"add_gauge(0,4,5,0,500,373,B,0ms,500ms,10,5)\n",
-		"add_gauge(17,1,3,0,100,38,H,0%,100%,10,5)\n",
-		"add_gauge(19,1,2,0,100,24,T,OC,100C,10,2)\n",
-		"add_xy_graph(11,0,6,-90.0,90.0,-180.0,180.0,5,P,Pitch & Roll,Roll,Pitch,0,0,0,0,1,1,0,1,1,wide,large,1,PR,255,0,0)\n",
-		"add_monitor(11,5,5,,1)\n",
-		"add_send_box(11,8,5,,*,#)\n",
+		"add_text(7,0,large,L,Humidity,245,240,245,)\n",
+		"add_text_box(7,6,2,C,37.3%,0,0,245,H)\n",
+		"add_text_box(9,6,2,C,23.8C,245,0,0,T)\n",
+		"add_text(8,8,large,L,Reset system,245,240,245,)\n",
+		"add_text_box(0,5,3,C,585mm,206,172,92,D)\n",
+		"add_text(17,0,large,C,Right motor power,245,240,245,)\n",
+		"add_text(13,0,large,C,Left motor power,245,240,245,)\n",
+		"add_text(9,0,large,L,Temperature,245,240,245,)\n",
+		"add_text(3,8,large,L,Oled On/Off,245,240,245,)\n",
+		"add_text(3,5,large,L,Distance,245,240,245,)\n",
+		"add_text(12,4,large,L,Terminal,245,240,245,)\n",
+		"add_text(18,8,large,C,Steering Joy,245,240,245,)\n",
+		"add_text(16,4,large,L,Tilt status,245,240,245,)\n",
+		"add_button(7,8,14,*reset#,)\n",
+		"add_switch(1,8,1,*oled on#,*oled off#,0,0)\n",
+		"add_free_pad(17,5,0,200,0,50,*joy ,#)\n",
+		"add_gauge(7,1,3,0,100,37,H,0%,100%,10,5)\n",
+		"add_gauge(9,1,2,0,100,23,T,OC,100C,10,2)\n",
+		"add_gauge(0,6,4,0,2000,585,D,0mm,2000mm,10,5)\n",
+		"add_gauge(12,1,1,0,200,100,R,BW,FW,10,5)\n",
+		"add_gauge(16,1,1,0,200,100,L,BW,FW,10,5)\n",
+		"add_led(15,4,1,I,0,255,0)\n",
+		"add_xy_graph(0,0,6,-90.0,90.0,-180.0,180.0,5,P,Pitch & Roll,Roll,Pitch,0,0,0,0,1,1,0,1,1,wide,large,1,PR,255,0,0)\n",
+		"add_monitor(12,5,5,,1)\n",
+		"add_send_box(12,8,5,led off,*,#)\n",
 		"set_panel_notes(-,,,)\n",
 		"run()\n",
 		"*\n"
@@ -3286,7 +3315,25 @@ void blePanelTaskFunction(void *argument)
 void motorsTaskFunction(void *argument)
 {
   /* USER CODE BEGIN motorsTaskFunction */
-  /* Infinite loop */
+
+	// Task synchronization bits
+	EventBits_t uxThisTasksSyncBits = MOTORS_INIT_EVENT;
+	EventBits_t uxBitsToWaitFor = (FLASH_INIT_EVENT |
+																 EVENT_HANDLER_INIT_EVENT |
+																 ACCEL_GYRO_INIT_EVENT |
+																 OLED_INIT_EVENT |
+																 DIST_INIT_EVENT |
+																 DIST_TRIGGER_INIT_EVENT |
+																 CPU_TEMP_INIT_EVENT);
+
+	// Text buffer and string data
+	char cText[OUTPUT_BUFFER_LEN] = {0};
+	Data_t printData = {0};
+
+	// Synchronize task initialization
+	xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
+
+	/* Infinite loop */
   for(;;)
   {
     osDelay(1);

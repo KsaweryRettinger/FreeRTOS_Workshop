@@ -139,6 +139,7 @@ void Error_Handler(void);
 #define SAVE_TO_FLASH (0x800)
 #define LOAD_FROM_FLASH (0x1000)
 #define FLASH_INIT_EVENT (0x2000)
+#define MOTORS_INIT_EVENT (0x4000)
 
 // CPU temperature readings
 #define VDD (3.3)
