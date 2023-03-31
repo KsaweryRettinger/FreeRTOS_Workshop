@@ -443,6 +443,7 @@ BaseType_t prvSaveCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvPanelCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvJoyCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvListCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 /* USER CODE END PFP */
 
@@ -498,6 +499,10 @@ const CLI_Command_Definition_t xJoyCommand = {.pcCommand = "joy",
 																								.pcHelpString = "joy:\r\n Controls motors power: joy X<value>Y<value>\r\n",
 																								.pxCommandInterpreter = prvJoyCommand,
 																								.cExpectedNumberOfParameters = 1 };
+const CLI_Command_Definition_t xListCommand = {.pcCommand = "list",
+																								.pcHelpString = "list:\r\n Lists all FreeRTOS tasks\r\n",
+																								.pxCommandInterpreter = prvListCommand,
+																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
 
@@ -531,6 +536,7 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xLoadCommand);
   FreeRTOS_CLIRegisterCommand(&xPanelCommand);
   FreeRTOS_CLIRegisterCommand(&xJoyCommand);
+  FreeRTOS_CLIRegisterCommand(&xListCommand);
 
   /* USER CODE END Init */
 
@@ -1981,6 +1987,26 @@ BaseType_t prvJoyCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char
 	return pdFALSE;
 }
 
+BaseType_t prvListCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	static BaseType_t showHeader = pdTRUE;
+
+	if (showHeader == pdTRUE) {
+		strncpy(pcWriteBuffer,
+						"Name          State  Priority  Stack   Num\r\n"
+						"*********************************************\n\r",
+						xWriteBufferLen);
+		showHeader = pdFALSE;
+		return pdTRUE;
+	}
+	else
+	{
+		showHeader = pdTRUE;
+		vTaskList(pcWriteBuffer);
+		return pdFALSE;
+	}
+}
+
 // Initializes string data to be sent via queue
 static void vInitPrintStringData(StringData_t *pPrintStringData, char *pcString, size_t xStringMaxSize, SemaphoreHandle_t pStringLock) {
 	pPrintStringData->pcString = pcString;
@@ -2533,13 +2559,13 @@ void eventTaskFunction(void *argument)
 	xEventGroupValue = xEventGroupSync(commonEventHandle, uxThisTasksSyncBits, uxBitsToWaitFor, pdMS_TO_TICKS(STD_DELAY));
 
 	if (!(xEventGroupValue & CPU_TEMP_INIT_EVENT))
-		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] cpuTempTask not ready!\r\n");
+		xSendStringByQueue(&printString, printStringQueueHandle, "[%s] cpuTempTask not ready!\r\n", pcTaskGetName(NULL));
 	if (!(xEventGroupValue & DIST_INIT_EVENT))
-		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] distTask not ready!\r\n");
+		xSendStringByQueue(&printString, printStringQueueHandle, "[%s] distTask not ready!\r\n", pcTaskGetName(NULL));
 	if (!(xEventGroupValue & ACCEL_GYRO_INIT_EVENT))
-		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] accelGyroTask not ready!\r\n");
+		xSendStringByQueue(&printString, printStringQueueHandle, "[%s] accelGyroTask not ready!\r\n", pcTaskGetName(NULL));
 	if (!(xEventGroupValue & OLED_INIT_EVENT))
-		xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] oledTask not ready!\r\n");
+		xSendStringByQueue(&printString, printStringQueueHandle, "[%s] oledTask not ready!\r\n", pcTaskGetName(NULL));
 
   for(;;)
   {
