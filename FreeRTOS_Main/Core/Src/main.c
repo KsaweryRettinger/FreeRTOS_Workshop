@@ -3531,10 +3531,49 @@ void motorsTaskFunction(void *argument)
 void tiltCheckTaskFunction(void *argument)
 {
   /* USER CODE BEGIN tiltCheckTaskFunction */
-  /* Infinite loop */
+
+	Data_t tiltData = {0};
+	TickType_t xTicksToWait = pdMS_TO_TICKS(500);
+	TimeOut_t xTimeOut = {0};
+	BaseType_t xStatus = pdFALSE;
+
   for(;;)
   {
-    osDelay(1);
+  	xStatus = xQueueReceive(tiltDataQueueHandle, &tiltData, pdMS_TO_TICKS(LONG_DELAY));
+
+  	if (pdTRUE == xStatus) {
+
+  		if (tiltData.value.pr[0] > MAXIMUM_TILT || tiltData.value.pr[0] < -MAXIMUM_TILT ||
+  			  tiltData.value.pr[1] > MAXIMUM_TILT || tiltData.value.pr[1] < -MAXIMUM_TILT) {
+
+  				// Initialize timeout structure with current tick value
+  				vTaskSetTimeOutState(&xTimeOut);
+
+  				do {
+
+  					// Wait for timeout
+  					if (xTaskCheckForTimeOut(&xTimeOut, &xTicksToWait) != pdFALSE) {
+
+  						// Set tilt alert bit
+  						xEventGroupSetBits(commonEventHandle, TILT_ALERT_EVENT);
+
+  						// Continue checking tilt until value is acceptable
+  						do {
+  							xQueueReceive(tiltDataQueueHandle, &tiltData, pdMS_TO_TICKS(SHORT_DELAY));
+  						} while (tiltData.value.pr[0] > MAXIMUM_TILT || tiltData.value.pr[0] < -MAXIMUM_TILT ||
+ 	  			       tiltData.value.pr[1] > MAXIMUM_TILT || tiltData.value.pr[1] < -MAXIMUM_TILT);
+
+  						// Set tilt alert bit
+  						xEventGroupSetBits(commonEventHandle, TILT_OK_EVENT);
+  					}
+
+  					// Timeout not reached, continue checking tilt value
+  					xQueueReceive(tiltDataQueueHandle, &tiltData, pdMS_TO_TICKS(SHORT_DELAY));
+
+  				} while (tiltData.value.pr[0] > MAXIMUM_TILT || tiltData.value.pr[0] < -MAXIMUM_TILT ||
+  	  			       tiltData.value.pr[1] > MAXIMUM_TILT || tiltData.value.pr[1] < -MAXIMUM_TILT);
+  		}
+  	}
   }
   /* USER CODE END tiltCheckTaskFunction */
 }
