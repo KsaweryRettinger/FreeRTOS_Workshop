@@ -140,6 +140,8 @@ void Error_Handler(void);
 #define LOAD_FROM_FLASH (0x1000)
 #define FLASH_INIT_EVENT (0x2000)
 #define MOTORS_INIT_EVENT (0x4000)
+#define TILT_ALERT_EVENT (0x8000)
+#define TILT_OK_EVENT (0x10000)
 
 // CPU temperature readings
 #define VDD (3.3)
@@ -211,7 +213,7 @@ void Error_Handler(void);
 // Flash memory
 #define FLASH_SECTOR7_ADDR (0x08060000);
 
-// Motor control
+// Motor control and tilt detection
 #define PWM_FREQ (100)
 #define MAXIMUM_TILT (30)
 

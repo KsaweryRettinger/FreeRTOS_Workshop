@@ -52,7 +52,8 @@ typedef enum {
 	HUMIDITY,
 	PITCHANDROLL,
 	JOYSTICK,
-	MOTORS
+	MOTORS,
+	TILT
 } eDataType;
 
 // Union for sending different data types via queue
@@ -249,6 +250,13 @@ const osThreadAttr_t motorsTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for tiltCheckTask */
+osThreadId_t tiltCheckTaskHandle;
+const osThreadAttr_t tiltCheckTask_attributes = {
+  .name = "tiltCheckTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for printStringQueue */
 osMessageQueueId_t printStringQueueHandle;
 const osMessageQueueAttr_t printStringQueue_attributes = {
@@ -273,6 +281,11 @@ const osMessageQueueAttr_t blePrintDataQueue_attributes = {
 osMessageQueueId_t joyDataQueueHandle;
 const osMessageQueueAttr_t joyDataQueue_attributes = {
   .name = "joyDataQueue"
+};
+/* Definitions for tiltDataQueue */
+osMessageQueueId_t tiltDataQueueHandle;
+const osMessageQueueAttr_t tiltDataQueue_attributes = {
+  .name = "tiltDataQueue"
 };
 /* Definitions for tempHumTim */
 osTimerId_t tempHumTimHandle;
@@ -386,6 +399,7 @@ void blePrintTaskFunction(void *argument);
 void bleStrPrintTaskFunction(void *argument);
 void blePanelTaskFunction(void *argument);
 void motorsTaskFunction(void *argument);
+void tiltCheckTaskFunction(void *argument);
 void tempHumTimCallback(void *argument);
 void oledTimCallback(void *argument);
 void ledTimCallback(void *argument);
@@ -616,6 +630,9 @@ int main(void)
   /* creation of joyDataQueue */
   joyDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &joyDataQueue_attributes);
 
+  /* creation of tiltDataQueue */
+  tiltDataQueueHandle = osMessageQueueNew (10, sizeof(Data_t), &tiltDataQueue_attributes);
+
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
@@ -671,6 +688,9 @@ int main(void)
 
   /* creation of motorsTask */
   motorsTaskHandle = osThreadNew(motorsTaskFunction, NULL, &motorsTask_attributes);
+
+  /* creation of tiltCheckTask */
+  tiltCheckTaskHandle = osThreadNew(tiltCheckTaskFunction, NULL, &tiltCheckTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -2447,17 +2467,18 @@ void accelGyroTaskFunction(void *argument)
   		gfPitch = fPitch = fPitch / ACCELGYRO_WIN_SIZE;
   		gfRoll = fRoll = fRoll / ACCELGYRO_WIN_SIZE;
 
-  		// Send data to OLED screen and BT task
+  		// Send data to other tasks
     	printData.type = PITCH;
     	printData.value.f = fPitch;
-    	xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+    	xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(STD_DELAY));
     	printData.type = ROLL;
     	printData.value.f = fRoll;
-    	xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+    	xQueueSend(oledDataQueueHandle, &printData, pdMS_TO_TICKS(STD_DELAY));
     	printData.type = PITCHANDROLL;
     	printData.value.pr[0] = fRoll;
     	printData.value.pr[1] = fPitch;
-    	xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+    	xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(STD_DELAY));
+    	xQueueSend(tiltDataQueueHandle, &printData, pdMS_TO_TICKS(STD_DELAY));
   	}
 
   	// Delay next sample
@@ -2496,6 +2517,14 @@ void eventTaskFunction(void *argument)
 	// OLED timer callback and number of timeout events
 	TimerCallback_t *pOledTimerCallback = NULL;
 	uint32_t *pxOledTimerExecuted = NULL;
+
+	// LED timer callback and status
+	TimerCallback_t *pLedTimerCallback = NULL;
+	BaseType_t *pxLedStatus = NULL;
+
+	// Get LED status
+	pLedTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(ledTimHandle);
+	pxLedStatus = pLedTimerCallback->arg;
 
 	// Initialize string data
 	vInitPrintStringData(&printString, cText, sizeof(cText), eventPrintSemHandle);
@@ -2569,6 +2598,39 @@ void eventTaskFunction(void *argument)
 			pOledTimerCallback = (TimerCallback_t *)pvTimerGetTimerID(oledTimHandle);
 			pxOledTimerExecuted = (uint32_t *)pOledTimerCallback->arg;
 			xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Number of OLED timeouts: %lu\r\n", *pxOledTimerExecuted);
+    }
+
+    if (xEventGroupValue & TILT_ALERT_EVENT) {
+
+    	// Suspend motors task, reset data queue and turn off all PWM channels
+    	vTaskSuspend(motorsTaskHandle);
+    	xQueueReset(joyDataQueueHandle);
+    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+    	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);
+
+    	// Send data to android app
+    	printData.type = MOTORS;
+    	printData.value.motors[0] = 100;
+    	printData.value.motors[1] = 100;
+    	xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+    	printData.type = TILT;
+    	printData.value.ui = TILT_ALERT_EVENT;
+    	xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+
+      // Restore LED blinking
+      if (*pxLedStatus == pdTRUE && xTimerIsTimerActive(ledTimHandle) == pdFALSE)
+      	xTimerStart(ledTimHandle, pdMS_TO_TICKS(SHORT_DELAY));
+
+      xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Tilt alert - suspending motors task\r\n");
+    }
+
+    if (xEventGroupValue & TILT_OK_EVENT) {
+    	vTaskResume(motorsTaskHandle);
+    	printData.type = TILT;
+    	printData.value.ui = TILT_OK_EVENT;
+    	xQueueSend(blePrintDataQueueHandle, &printData, pdMS_TO_TICKS(SHORT_DELAY));
+    	xSendStringByQueue(&printString, printStringQueueHandle, "[eventTask] Tilt ok - resuming motors task\r\n");
     }
   }
   /* USER CODE END eventTaskFunction */
@@ -2728,11 +2790,11 @@ void oledTaskFunction(void *argument)
 
   			case PITCHANDROLL:
   				break;
-
   			case JOYSTICK:
   				break;
-
   			case MOTORS:
+  				break;
+  			case TILT:
   				break;
   		}
   	}
@@ -3165,6 +3227,12 @@ void blePrintTaskFunction(void *argument)
 				case MOTORS:
 					xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*L%lu**R%lu*", printData.value.motors[0], printData.value.motors[1]);
 					break;
+				case TILT:
+					if (printData.value.ui == TILT_ALERT_EVENT)
+						xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*IR255G0B0*");
+					else if (printData.value.ui == TILT_OK_EVENT)
+						xReceiveSize = snprintf(cReceiveBuffer, OUTPUT_BUFFER_LEN, "*IR0G255B0*");
+					break;
 				default:
 					xStatus = pdFALSE;
 			}
@@ -3451,6 +3519,24 @@ void motorsTaskFunction(void *argument)
 	}
 
   /* USER CODE END motorsTaskFunction */
+}
+
+/* USER CODE BEGIN Header_tiltCheckTaskFunction */
+/**
+* @brief Function implementing the tiltCheckTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_tiltCheckTaskFunction */
+void tiltCheckTaskFunction(void *argument)
+{
+  /* USER CODE BEGIN tiltCheckTaskFunction */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END tiltCheckTaskFunction */
 }
 
 /* tempHumTimCallback function */
