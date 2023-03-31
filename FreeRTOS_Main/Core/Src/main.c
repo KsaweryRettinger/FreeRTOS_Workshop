@@ -2526,7 +2526,7 @@ void eventTaskFunction(void *argument)
 	char cText[OUTPUT_BUFFER_LEN] = {0};
 	StringData_t printString = {0};
 	uint8_t cValue = 0;
-	EventBits_t xBitsToWaitFor = (BUTTON_EVENT | MOTION_INT_EVENT);
+	EventBits_t xBitsToWaitFor = (BUTTON_EVENT | MOTION_INT_EVENT | TILT_ALERT_EVENT | TILT_OK_EVENT);
 	EventBits_t xEventGroupValue = 0;
 	Data_t printData = {0};
 
