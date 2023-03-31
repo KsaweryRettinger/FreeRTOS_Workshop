@@ -142,21 +142,21 @@ const osThreadAttr_t defaultTask_attributes = {
 osThreadId_t cliTaskHandle;
 const osThreadAttr_t cliTask_attributes = {
   .name = "cliTask",
-  .stack_size = 512 * 4,
+  .stack_size = 768 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for streamPrintTask */
 osThreadId_t streamPrintTaskHandle;
 const osThreadAttr_t streamPrintTask_attributes = {
   .name = "streamPrintTask",
-  .stack_size = 512 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for printTask */
 osThreadId_t printTaskHandle;
 const osThreadAttr_t printTask_attributes = {
   .name = "printTask",
-  .stack_size = 512 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for cpuTempTask */
@@ -177,7 +177,7 @@ const osThreadAttr_t accelGyroTask_attributes = {
 osThreadId_t eventTaskHandle;
 const osThreadAttr_t eventTask_attributes = {
   .name = "eventTask",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for oledTask */
@@ -219,21 +219,21 @@ const osThreadAttr_t saveLoadTask_attributes = {
 osThreadId_t bleCliTaskHandle;
 const osThreadAttr_t bleCliTask_attributes = {
   .name = "bleCliTask",
-  .stack_size = 512 * 4,
+  .stack_size = 768 * 4,
   .priority = (osPriority_t) osPriorityHigh1,
 };
 /* Definitions for blePrintTask */
 osThreadId_t blePrintTaskHandle;
 const osThreadAttr_t blePrintTask_attributes = {
   .name = "blePrintTask",
-  .stack_size = 512 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for bleStrPrintTask */
 osThreadId_t bleStrPrintTaskHandle;
 const osThreadAttr_t bleStrPrintTask_attributes = {
   .name = "bleStrPrintTask",
-  .stack_size = 512 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for blePanelTask */

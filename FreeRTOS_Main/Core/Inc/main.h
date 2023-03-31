@@ -64,7 +64,7 @@ void Error_Handler(void);
 #define DEL_CHAR 127
 #define INPUT_BUFFER_LEN 100
 #define QUEUE_SIZE 10
-#define OUTPUT_BUFFER_LEN 500
+#define OUTPUT_BUFFER_LEN 1000
 #define NEWPAGE_CHAR 12
 #define LONG_DELAY 1000
 #define B1_Pin GPIO_PIN_13
