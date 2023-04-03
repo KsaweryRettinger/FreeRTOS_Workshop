@@ -446,6 +446,7 @@ BaseType_t prvLoadCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 BaseType_t prvPanelCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvJoyCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 BaseType_t prvListCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
+BaseType_t prvStatsCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString);
 
 /* USER CODE END PFP */
 
@@ -505,6 +506,10 @@ const CLI_Command_Definition_t xListCommand = {.pcCommand = "list",
 																								.pcHelpString = "list:\r\n Lists all FreeRTOS tasks\r\n",
 																								.pxCommandInterpreter = prvListCommand,
 																								.cExpectedNumberOfParameters = 0 };
+const CLI_Command_Definition_t xStatsCommand = {.pcCommand = "stats",
+																								.pcHelpString = "stats:\r\n Displays FreeRTOS runtime statistics\r\n",
+																								.pxCommandInterpreter = prvStatsCommand,
+																								.cExpectedNumberOfParameters = 0 };
 
 /* USER CODE END 0 */
 
@@ -539,6 +544,7 @@ int main(void)
   FreeRTOS_CLIRegisterCommand(&xPanelCommand);
   FreeRTOS_CLIRegisterCommand(&xJoyCommand);
   FreeRTOS_CLIRegisterCommand(&xListCommand);
+  FreeRTOS_CLIRegisterCommand(&xStatsCommand);
 
   /* USER CODE END Init */
 
@@ -2069,6 +2075,78 @@ BaseType_t prvListCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 	{
 		showHeader = pdTRUE;
 		vTaskList(pcWriteBuffer);
+		return pdFALSE;
+	}
+}
+
+BaseType_t prvStatsCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
+
+	TaskStatus_t *pxTaskStatusArray = NULL;
+	UBaseType_t uxArraySize = 0;
+	unsigned long ulTotalRunTime = 0;
+	float statsAsPercentage = 0.0;
+	float idlePercentage = 0.0;
+	static BaseType_t showHeader = pdTRUE;
+	BaseType_t x = 0;
+
+	if (showHeader == pdTRUE)
+	{
+		strncpy(pcWriteBuffer,
+						"Task               Abs. time     Time %\r\n"
+						"******************************************\n\r",
+						xWriteBufferLen);
+		showHeader = pdFALSE;
+		return pdTRUE;
+	}
+	else
+	{
+		// Get number of tasks and allocate task status structures
+		uxArraySize = uxTaskGetNumberOfTasks();
+		pxTaskStatusArray = pvPortMalloc(uxArraySize * sizeof(TaskStatus_t));
+
+		if (pxTaskStatusArray != NULL) {
+
+			// Populate array with task state data
+			uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, uxArraySize, NULL);
+
+			// Calculate total runtime of all tasks (adjusted for percentage)
+			for (x = 0; x < uxArraySize; x++)
+				ulTotalRunTime += (pxTaskStatusArray[x].ulRunTimeCounter) / 100;
+
+			// Print all task stats
+			if (ulTotalRunTime > 0) {
+
+				// Calculate task runtime as a percentage
+				for (x = 0; x < uxArraySize; x++) {
+					statsAsPercentage = (float)pxTaskStatusArray[x].ulRunTimeCounter / ulTotalRunTime;
+
+					// Store idle runtime separately
+					if (0 == strncmp("IDLE", pxTaskStatusArray[x].pcTaskName, configMAX_TASK_NAME_LEN)) {
+						idlePercentage = statsAsPercentage;
+					}
+
+					// Print runtime status
+					sprintf(pcWriteBuffer,
+								  "%-16s  %10lu     %5.2f%%\r\n",
+									pxTaskStatusArray[x].pcTaskName,
+									pxTaskStatusArray[x].ulRunTimeCounter,
+									statsAsPercentage);
+
+					// Move buffer pointer to the next free entry
+					pcWriteBuffer += strlen((char *) pcWriteBuffer);
+				}
+			}
+
+			// Print info about CPU utilization
+			sprintf(pcWriteBuffer,
+						  "\r\nNumber of tasks: %lu\r\nCPU utilization: %.2f%%\r\n",
+							uxArraySize,
+							100.0 - idlePercentage);
+
+			vPortFree(pxTaskStatusArray);
+		}
+
+		showHeader = pdTRUE;
 		return pdFALSE;
 	}
 }
