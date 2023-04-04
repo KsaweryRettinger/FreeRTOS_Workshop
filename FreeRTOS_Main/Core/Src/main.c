@@ -2192,7 +2192,7 @@ static inline BaseType_t xSendStringByQueue(StringData_t *pPrintStringData, Queu
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
+	vTaskSuspend(NULL);
   for(;;)
   {
     osDelay(1);
