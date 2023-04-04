@@ -2628,8 +2628,8 @@ void accelGyroTaskFunction(void *argument)
   	if (bDataReady) {
 
   		// Sum readings
-  	  gfPitch = fPitch = 0;
-  		gfRoll = fRoll = 0;
+  	  fPitch = 0;
+  		fRoll = 0;
   		for (uint8_t i = 0; i < ACCELGYRO_WIN_SIZE; i++) {
   			fPitch += fPitchWin[i];
   			fRoll += fRollWin[i];
