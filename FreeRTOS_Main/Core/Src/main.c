@@ -366,6 +366,8 @@ float gfRoll = 0.0;
 uint16_t screenBuffer[OLED_SCREEN_HEIGHT][OLED_SCREEN_WIDTH] = {0};
 extern uint8_t mobicaLogo[];
 extern size_t mobicaLogoSize;
+uint32_t gQueueSend = 0;
+uint32_t gQueueSendBlocked = 0;
 
 /* USER CODE END PV */
 

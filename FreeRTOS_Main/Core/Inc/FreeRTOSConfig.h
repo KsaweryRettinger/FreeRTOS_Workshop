@@ -54,6 +54,8 @@
 /* USER CODE BEGIN 0 */
   extern void configureTimerForRunTimeStats(void);
   extern unsigned long getRunTimeCounterValue(void);
+  extern uint32_t gQueueSend;
+  extern uint32_t gQueueSendBlocked;
 /* USER CODE END 0 */
 #endif
 #ifndef CMSIS_device_header
@@ -185,6 +187,8 @@ standard names. */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
 #define configCOMMAND_INT_MAX_OUTPUT_SIZE 1
 #define configUSE_QUEUE_SETS 1
+#define traceQUEUE_SEND(X) gQueueSend++
+#define traceBLOCKING_ON_QUEUE_SEND(X) gQueueSendBlocked++
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */
