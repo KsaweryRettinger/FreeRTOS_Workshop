@@ -1798,7 +1798,7 @@ static int32_t vectorLength(int32_t X, int32_t Y) {
 void configureTimerForRunTimeStats(void)
 {
 	// Configure timer prescaler as a 1/100 of time slice
-	uint32_t psc = (SystemCoreClock / configTICK_RATE_HZ) / 100;
+	uint32_t psc = 0;
 	__HAL_TIM_SET_PRESCALER(&htim8, psc);
 
 	// Start timer
