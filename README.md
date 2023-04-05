@@ -22,4 +22,4 @@ Workshop covering the usage of FreeRTOS with the Nucleo64 STM32F446RE board. The
 - OLED display
 - CLI interface
 - Live data view (STMStudio)
-- RTOS debugging
+- RTOS debugging with ITM and SWV

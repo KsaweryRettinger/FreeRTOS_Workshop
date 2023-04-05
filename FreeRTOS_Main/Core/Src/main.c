@@ -716,6 +716,8 @@ int main(void)
   /* creation of commonEvent */
   commonEventHandle = osEventFlagsNew(&commonEvent_attributes);
 
+  printf("System initialization finished, starting kernel\r\n");
+
   /* USER CODE BEGIN RTOS_EVENTS */
   /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
@@ -1797,8 +1799,7 @@ static int32_t vectorLength(int32_t X, int32_t Y) {
 		return length;
 }
 
-void configureTimerForRunTimeStats(void)
-{
+void configureTimerForRunTimeStats(void) {
 	// Configure timer prescaler as a 1/100 of time slice
 	uint32_t psc = 0;
 	__HAL_TIM_SET_PRESCALER(&htim8, psc);
@@ -1807,12 +1808,20 @@ void configureTimerForRunTimeStats(void)
 	HAL_TIM_Base_Start(&htim8);
 }
 
-unsigned long getRunTimeCounterValue(void)
-{
+unsigned long getRunTimeCounterValue(void) {
 	// Get timer counter value
 	return __HAL_TIM_GET_COUNTER(&htim8);
 }
 
+int _write(int file, char *ptr, int len) {
+
+	// Write message to ITM, one character at a time
+	for (int DataIdx = 0; DataIdx < len; DataIdx++) {
+		ITM_SendChar(*ptr++);
+	}
+
+	return len;
+}
 
 // FreeRTOS CLI "led" command
 BaseType_t prvLedCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString) {
@@ -1940,6 +1949,7 @@ BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 		//Resume task
 		if (eSuspended == eTaskGetState(oledTaskHandle)) {
 			strncpy(pcWriteBuffer, "[cli] Resuming OLED task\r\n", xWriteBufferLen);
+			printf("[cli] Resuming OLED task\r\n");
 			vTaskResume(oledTaskHandle);
 		} else {
 			strncpy(pcWriteBuffer, "[cli] OLED task is already running\r\n", xWriteBufferLen);
@@ -1957,6 +1967,7 @@ BaseType_t prvOledCommand(char *pcWriteBuffer, size_t xWriteBufferLen, const cha
 		//Suspend task
 		if (eSuspended != eTaskGetState(oledTaskHandle)) {
 			strncpy(pcWriteBuffer, "[cli] Suspending OLED task\r\n", xWriteBufferLen);
+			printf("[cli] Suspending OLED task\r\n");
 			vTaskSuspend(oledTaskHandle);
 			memset(screenBuffer, 0x0, sizeof(screenBuffer));
 		} else {
