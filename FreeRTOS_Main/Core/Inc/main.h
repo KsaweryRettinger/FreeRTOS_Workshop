@@ -216,7 +216,7 @@ void Error_Handler(void);
 // Motor control and tilt detection
 #define PWM_FREQ (100)
 #define MAXIMUM_TILT (30)
-
+#define ITM_PORT_WRITE(port_num, value) ITM->PORT[(port_num)].u32 = (unsigned long) (value)
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

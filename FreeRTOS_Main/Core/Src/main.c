@@ -2635,9 +2635,13 @@ void accelGyroTaskFunction(void *argument)
   			fRoll += fRollWin[i];
   		}
 
+  		ITM_PORT_WRITE(31, 1);
+
   		// Calculate average
   		gfPitch = fPitch = fPitch / ACCELGYRO_WIN_SIZE;
   		gfRoll = fRoll = fRoll / ACCELGYRO_WIN_SIZE;
+
+  		ITM_PORT_WRITE(31, 2);
 
   		// Send data to other tasks
     	printData.type = PITCH;
